@@ -1,19 +1,13 @@
 """Schéma de données (SQLAlchemy)"""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import JSON, Column, ForeignKey, Index, Table, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
-
-
-def _utcnow() -> datetime:
-    # Naïf, UTC implicite (pas datetime.utcnow(), dépréciée) -- cohérent avec parser.py :
-    # SQLite ne conserve pas le fuseau horaire des datetime "aware" à travers un aller-retour
-    # en base, donc tout le projet reste en naïf pour éviter un mélange naïf/aware.
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from .time_utils import utcnow as _utcnow
 
 # Table d'association Flow <-> AclProposal (many-to-many : plusieurs Flow peuvent être
 # regroupés en une seule proposition ACL, cf. Phase B / regroupement).
@@ -148,6 +142,12 @@ class Flow(Base):
     acl_proposals: Mapped[list["AclProposal"]] = relationship(
         secondary=flow_acl_proposal, back_populates="flows"
     )
+    # passive_deletes=True : laisse le ON DELETE CASCADE de la base gérer la suppression --
+    # sans ça, SQLAlchemy tente par défaut un UPDATE ... SET flow_id = NULL avant le DELETE,
+    # ce qui viole la contrainte NOT NULL de flow_id (bug rencontré et corrigé ici même).
+    validation_history: Mapped[list["FlowValidationHistory"]] = relationship(
+        back_populates="flow", order_by="FlowValidationHistory.created_at", passive_deletes=True
+    )
 
 
 class AclProposal(Base):
@@ -176,3 +176,28 @@ class AclProposal(Base):
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
     flows: Mapped[list["Flow"]] = relationship(secondary=flow_acl_proposal, back_populates="acl_proposals")
+
+
+class FlowValidationHistory(Base):
+    """Trace chaque changement de `Flow.validation_status` : qui, quand, ancien -> nouveau
+    statut. Demande explicite de l'encadrant dès la conception initiale (traçabilité des
+    décisions de sécurité) -- Flow ne garde que l'état courant, cette table garde l'historique
+    complet. Écrite automatiquement par app/flow_validation.py à chaque validation, jamais
+    modifiée par ailleurs (table d'audit en ajout seul).
+    """
+
+    __tablename__ = "flow_validation_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # CASCADE (pas SET NULL comme LogEntry) : cette table est un historique *du* Flow, elle
+    # n'a pas de sens sans lui -- à la différence de LogEntry qui doit survivre indépendamment
+    # (conservation intégrale des logs bruts). Aucune fonctionnalité de suppression de Flow
+    # n'existe aujourd'hui ; ce choix ne s'applique donc encore à aucun cas réel.
+    flow_id: Mapped[int] = mapped_column(ForeignKey("flows.id", ondelete="CASCADE"), index=True)
+    flow: Mapped["Flow"] = relationship(back_populates="validation_history")
+
+    old_status: Mapped[Optional[str]]
+    new_status: Mapped[str]
+    validated_by: Mapped[Optional[str]]
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)

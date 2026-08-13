@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import Base
-from app.models import AclProposal, Flow, LogEntry
+from app.models import AclProposal, Flow, FlowValidationHistory, LogEntry
 
 
 @pytest.fixture()
@@ -98,3 +98,31 @@ def test_deleting_flow_preserves_log_entries_but_removes_proposal_link(session):
     refreshed = session.get(LogEntry, log_entry.id)
     assert refreshed is not None
     assert refreshed.flow_id is None
+
+
+def test_validation_history_is_linked_to_its_flow(session):
+    flow = Flow(source="SITE-A-FWTEST", src_ip="10.10.1.32", dst_ip="203.0.113.10", dst_port=443, protocol="tcp")
+    session.add(flow)
+    session.flush()
+
+    entry = FlowValidationHistory(flow_id=flow.id, old_status="pending", new_status="approved", validated_by="Loulou")
+    session.add(entry)
+    session.commit()
+
+    assert flow.validation_history == [entry]
+    assert entry.flow.dst_ip == "203.0.113.10"
+
+
+def test_deleting_flow_cascades_to_its_validation_history(session):
+    # À la différence de LogEntry (qui doit survivre indépendamment), l'historique de
+    # validation n'a pas de sens sans le Flow qu'il documente -- CASCADE assumé.
+    flow = Flow(source="SITE-A-FWTEST", src_ip="10.10.1.32", dst_ip="203.0.113.10", dst_port=443, protocol="tcp")
+    session.add(flow)
+    session.flush()
+    session.add(FlowValidationHistory(flow_id=flow.id, old_status="pending", new_status="approved"))
+    session.commit()
+
+    session.delete(flow)
+    session.commit()
+
+    assert session.query(FlowValidationHistory).count() == 0

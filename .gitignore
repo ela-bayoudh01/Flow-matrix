@@ -17,8 +17,8 @@ venv/
 backend/data/
 
 # Docs contiennent des IP/zones/noms de policy réels de Nouvelair et des stats de trafic
-# réel -- exclus temporairement le temps de décider comment les traiter (2026-08-11).
-# Voir docs/01-journal-technique.md (copie locale) pour le contexte de cette décision.
+# réel -- usage personnel/local uniquement, jamais poussées sur GitHub (décision de Loulou,
+# confirmée 2026-08-11 : pas d'anonymisation, elles restent simplement locales).
 docs/
 
 # Node / React
