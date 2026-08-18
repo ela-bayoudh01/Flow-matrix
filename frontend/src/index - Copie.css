@@ -1,0 +1,11 @@
+/* Reset minimal -- l'app est une interface de données pleine largeur (tables/grilles),
+pas une page de présentation : le template Vite par défaut (largeur fixe centrée, texte
+centré) ne convenait pas et a été retiré. Le thème visuel est géré par MUI (voir main.tsx). */
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
