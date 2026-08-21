@@ -4,11 +4,11 @@ Outil d'aide à la décision pour l'équipe réseau de Nouvelair : transforme le
 
 **Stack** : FastAPI + SQLAlchemy + SQLite (backend) · React + TypeScript + MUI + AG Grid (frontend).
 
-**État actuel** : projet fonctionnellement complet -- backend (6 moteurs : Parser/Flow/Matrix/Qualification/Recommendation/ACL Engines, historique de validation) et frontend (7 pages : Dashboard, Matrice, Table des flux, Historique, Recommandations, Propositions ACL), tous vérifiés sur les vraies données de `flow_matrix.db`. Passage de design professionnel effectué (sidebar, thème MUI personnalisé, palette calée sur la méthode data-viz, animations). Prochaine étape à définir avec Loulou.
+**État actuel** : projet fonctionnellement complet -- backend (6 moteurs : Parser/Flow/Matrix/Qualification/Recommendation/ACL Engines, historique de validation) et frontend (7 pages : Dashboard, Import, Matrice, Table des flux, Historique, Recommandations, Propositions ACL), tous vérifiés sur les vraies données de `flow_matrix.db`. Passage de design professionnel effectué (sidebar, thème MUI personnalisé, palette calée sur la méthode data-viz, animations). Page Import ajoutée (upload de logs + enchaînement qualification/recommandations depuis l'interface). Prochaine étape à définir avec Loulou.
 
 **Données sensibles** : `backend/data/raw_logs/`, `backend/flow_matrix.db` et tout `docs/` contiennent de vraies données Nouvelair (IP, zones, sites) — gitignorés, jamais commités. Le code (y compris les tests) n'utilise que des données fictives.
 
-**⚠️ Après l'import d'un nouveau fichier de logs**, rien ne se met à jour automatiquement au-delà de la Table des flux/Matrice/Dashboard/Historique — Qualification, Recommandations et Propositions ACL exigent chacune un déclenchement explicite, **dans cet ordre précis** (chacun dépend du précédent) : voir [`docs/12-checklist-apres-import.md`](docs/12-checklist-apres-import.md).
+**⚠️ Après l'import d'un nouveau fichier de logs** (page **Import**), rien ne se met à jour automatiquement au-delà de la Table des flux/Matrice/Dashboard/Historique — Qualification, Recommandations et Propositions ACL exigent chacune un déclenchement explicite, **dans cet ordre précis** (chacun dépend du précédent) : voir [`docs/12-checklist-apres-import.md`](docs/12-checklist-apres-import.md).
 
 ## Documentation
 
@@ -37,6 +37,7 @@ Outil d'aide à la décision pour l'équipe réseau de Nouvelair : transforme le
 | `docs/frontend/07-recommendations-page.md` | Page recommandations : grille, panneau de détail, aide contextuelle |
 | `docs/frontend/08-acl-proposals-page.md` | Page propositions ACL : grille, fiche, export, ajout manuel |
 | `docs/frontend/09-design-system.md` | Passage design : palette, thème MUI, sidebar, animations |
+| `docs/frontend/10-import-page.md` | Page Import : upload de logs, enchaînement qualification/recommandations, vérification isolée |
 
 ## Règle de comportement
 

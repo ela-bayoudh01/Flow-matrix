@@ -40,6 +40,14 @@ export function FlowsTablePage() {
           .
         </Alert>
       )}
+      {qualifyFlows.isSuccess && qualifyFlows.data.unclassified_zones.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Zones non classées détectées : {qualifyFlows.data.unclassified_zones.join(", ")}. Le
+          score de criticité des flux concernés est calculé par défaut (sans savoir s'il s'agit
+          d'une zone interne ou externe) -- à vérifier avant de considérer ces résultats comme
+          fiables, en classant ces zones dans ZONE_ROLES.
+        </Alert>
+      )}
       {qualifyFlows.isError && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {(qualifyFlows.error as Error).message}

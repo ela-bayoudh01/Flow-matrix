@@ -40,12 +40,17 @@ def import_log_file(session: Session, file: IO[bytes], filename: str) -> dict:
             LogEntry.source, LogEntry.device_uuid, LogEntry.connection_id, LogEntry.first_packet_at
         )
     }
+    # Capturé AVANT le traitement des lignes : sert uniquement à distinguer une source déjà
+    # connue d'une source nouvelle dans le résumé retourné -- pas une nouvelle règle métier,
+    # juste exposer une distinction déjà implicite (resolve_source tourne déjà par ligne).
+    sources_before_import = {s for (s,) in session.query(LogEntry.source).distinct()}
 
     lines_read = 0
     parsing_errors = 0
     log_entries_created = 0
     log_entries_skipped_duplicate = 0
     flows_touched = set()
+    sources_seen: set[str] = set()
     flow_cache: flow_engine.FlowCache = {}
 
     for raw_line in _iter_text_lines(file):
@@ -61,6 +66,7 @@ def import_log_file(session: Session, file: IO[bytes], filename: str) -> dict:
             continue
 
         source = resolve_source(parsed, filename)
+        sources_seen.add(source)
         key = (source, parsed.get("device_uuid"), parsed.get("connection_id"), parsed.get("first_packet_at"))
         if key in existing_keys:
             log_entries_skipped_duplicate += 1
@@ -78,6 +84,8 @@ def import_log_file(session: Session, file: IO[bytes], filename: str) -> dict:
 
     session.commit()
 
+    new_sources = sources_seen - sources_before_import
+
     return {
         "filename": filename,
         "lines_read": lines_read,
@@ -85,6 +93,8 @@ def import_log_file(session: Session, file: IO[bytes], filename: str) -> dict:
         "log_entries_skipped_duplicate": log_entries_skipped_duplicate,
         "parsing_errors": parsing_errors,
         "flows_touched": len(flows_touched),
+        "sources": sorted(sources_seen),
+        "new_sources": sorted(new_sources),
     }
 
 

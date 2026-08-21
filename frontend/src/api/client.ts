@@ -2,6 +2,7 @@
 // L'URL de base est configurable via VITE_API_BASE_URL (voir .env), par défaut l'API locale.
 
 import type {
+  ImportSummary,
   FlowFilterValues,
   FlowsFilters,
   FlowsResponse,
@@ -59,7 +60,41 @@ function buildQuery(params: object): string {
   return qs ? `?${qs}` : "";
 }
 
+// XHR plutôt que fetch : c'est le seul appel de l'app qui a besoin d'une vraie progression
+// d'upload (`xhr.upload.onprogress`), fetch ne l'expose pas nativement. Le traitement
+// serveur (parsing + Flow Engine) continue bien après la fin de l'upload -- cette
+// progression ne couvre que la phase d'envoi, jamais présentée comme le progrès total
+// (cf. ImportPage.tsx, deux phases distinctes affichées séparément).
+function uploadLogFile(file: File, onUploadProgress?: (percent: number) => void): Promise<ImportSummary> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}/api/logs/import`);
+    xhr.upload.onprogress = (event) => {
+      if (onUploadProgress && event.lengthComputable) {
+        onUploadProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as ImportSummary);
+        } catch {
+          reject(new ApiError(xhr.status, "Réponse invalide du serveur"));
+        }
+      } else {
+        reject(new ApiError(xhr.status, xhr.responseText || xhr.statusText));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError(0, "Erreur réseau pendant l'import"));
+    const formData = new FormData();
+    formData.append("file", file);
+    xhr.send(formData);
+  });
+}
+
 export const api = {
+  importLogs: uploadLogFile,
+
   getFlows(filters: FlowsFilters = {}): Promise<FlowsResponse> {
     return request(`/api/flows${buildQuery(filters)}`);
   },

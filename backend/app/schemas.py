@@ -13,6 +13,8 @@ class ImportSummary(BaseModel):
     log_entries_skipped_duplicate: int
     parsing_errors: int
     flows_touched: int
+    sources: list[str]
+    new_sources: list[str]
 
 
 class QualificationRunSummary(BaseModel):
@@ -20,6 +22,7 @@ class QualificationRunSummary(BaseModel):
 
     total_qualified: int
     label_counts: dict[str, int]
+    unclassified_zones: list[str]
 
 
 class FlowOut(BaseModel):

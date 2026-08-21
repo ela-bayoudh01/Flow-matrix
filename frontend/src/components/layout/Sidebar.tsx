@@ -6,6 +6,7 @@ import Typography from "@mui/material/Typography";
 import Tooltip from "@mui/material/Tooltip";
 import IconButton from "@mui/material/IconButton";
 import SpaceDashboardOutlinedIcon from "@mui/icons-material/SpaceDashboardOutlined";
+import CloudUploadOutlinedIcon from "@mui/icons-material/CloudUploadOutlined";
 import GridViewOutlinedIcon from "@mui/icons-material/GridViewOutlined";
 import ListAltOutlinedIcon from "@mui/icons-material/ListAltOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
@@ -17,6 +18,7 @@ import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 
 const NAV_ITEMS = [
   { label: "Dashboard", to: "/dashboard", icon: SpaceDashboardOutlinedIcon },
+  { label: "Import", to: "/import", icon: CloudUploadOutlinedIcon },
   { label: "Matrice", to: "/matrix", icon: GridViewOutlinedIcon },
   { label: "Table des flux", to: "/flows", icon: ListAltOutlinedIcon },
   { label: "Historique", to: "/history", icon: HistoryOutlinedIcon },

@@ -57,9 +57,10 @@ FREQUENCY_MODERATE_MAX = 5
 FREQUENCY_RARE_POINTS = 15
 FREQUENCY_MODERATE_POINTS = 8
 FREQUENCY_COMMON_POINTS = 0
-# Signal minimal : zone/port au-delà de leur catégorie la plus bénigne (interne_vers_externe
-# pour la zone, port_courant pour le port) déclenchent la prise en compte de la fréquence.
-ZONE_BASELINE_POINTS = ZONE_DIRECTION_POINTS[("interne", "externe")]
+# Signal minimal : zone/port au-delà de leur catégorie la plus bénigne déclenchent la prise en
+# compte de la fréquence. Côté zone, les catégories bénignes sont "interne_vers_externe" (trafic
+# normal) *et* "zone_non_classifiee" (absence d'info, pas un risque avéré -- cf. qualify()).
+# Côté port, seul "port_courant" (443/80/53) est bénin.
 PORT_BASELINE_POINTS = PORT_SAFE_POINTS
 
 # --- Action : dominant_action du Flow ---
@@ -79,7 +80,14 @@ def qualify(flow: Flow) -> dict:
     pas la base. L'appelant décide d'appliquer le résultat (voir qualify_all)."""
     zone_points, zone_reason = _score_zone(flow.ingress_zone, flow.egress_zone)
     port_points, port_reason = _score_port(flow.dst_port)
-    signal_present = zone_points > ZONE_BASELINE_POINTS or port_points > PORT_BASELINE_POINTS
+    # "zone_non_classifiee" (15 pts, catégorie ci-dessus le seuil "interne_vers_externe" à 5)
+    # est une absence d'information, pas un signal élevé -- ne doit donc jamais déclencher la
+    # fréquence à elle seule. Sans cette exclusion, toute zone absente de ZONE_ROLES fait
+    # automatiquement passer du trafic banal (Allow/port courant/1 occurrence) en "high" (bug
+    # réel trouvé sur TUN-ARP-BOX-FWBJ, 2207/2299 flux "high" concernés -- docs/07).
+    zone_is_signal = zone_reason["category"] not in ("interne_vers_externe", "zone_non_classifiee")
+    port_is_signal = port_points > PORT_BASELINE_POINTS
+    signal_present = zone_is_signal or port_is_signal
     frequency_points, frequency_reason = _score_frequency(flow.occurrence_count, signal_present)
     action_points, action_reason = _score_action(flow.dominant_action)
 
@@ -103,13 +111,15 @@ def qualify(flow: Flow) -> dict:
 
 def qualify_all(session: Session, source: Optional[str] = None) -> dict:
     """Qualifie tous les Flow (ou ceux d'une source donnée), écrit le résultat, commit.
-    Retourne un résumé (nombre qualifié, répartition par label) pour vérification.
+    Retourne un résumé (nombre qualifié, répartition par label, zones absentes de ZONE_ROLES
+    rencontrées) pour vérification.
     """
     query = session.query(Flow)
     if source is not None:
         query = query.filter(Flow.source == source)
 
     label_counts: collections.Counter = collections.Counter()
+    unclassified_zones: set[str] = set()
     total = 0
     for flow in query.all():
         result = qualify(flow)
@@ -119,9 +129,16 @@ def qualify_all(session: Session, source: Optional[str] = None) -> dict:
         flow.qualification_reasons = result["qualification_reasons"]
         label_counts[result["criticality_label"]] += 1
         total += 1
+        for zone in (flow.ingress_zone, flow.egress_zone):
+            if zone and zone not in ZONE_ROLES:
+                unclassified_zones.add(zone)
     session.commit()
 
-    return {"total_qualified": total, "label_counts": dict(label_counts)}
+    return {
+        "total_qualified": total,
+        "label_counts": dict(label_counts),
+        "unclassified_zones": sorted(unclassified_zones),
+    }
 
 
 def _score_zone(ingress_zone: Optional[str], egress_zone: Optional[str]) -> tuple[int, dict]:

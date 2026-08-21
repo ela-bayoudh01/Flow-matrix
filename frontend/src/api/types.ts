@@ -1,6 +1,17 @@
 // Types miroir des schémas Pydantic du backend (backend/app/schemas.py).
 // Garder synchronisé manuellement -- pas de génération automatique en V1.
 
+export interface ImportSummary {
+  filename: string;
+  lines_read: number;
+  log_entries_created: number;
+  log_entries_skipped_duplicate: number;
+  parsing_errors: number;
+  flows_touched: number;
+  sources: string[];
+  new_sources: string[];
+}
+
 export interface FlowOut {
   id: number;
   source: string | null;
@@ -140,6 +151,7 @@ export interface RecommendationFilters {
 export interface QualificationRunSummary {
   total_qualified: number;
   label_counts: Record<string, number>;
+  unclassified_zones: string[];
 }
 
 export interface RecommendationRunSummary {

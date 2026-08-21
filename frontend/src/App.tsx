@@ -5,6 +5,7 @@ import { PageTransition } from "./components/layout/PageTransition";
 import { FlowsTablePage } from "./pages/FlowsTablePage";
 import { MatrixPage } from "./pages/MatrixPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { ImportPage } from "./pages/ImportPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { RecommendationsPage } from "./pages/RecommendationsPage";
 import { AclProposalsPage } from "./pages/AclProposalsPage";
@@ -19,6 +20,7 @@ function App() {
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/import" element={<ImportPage />} />
               <Route path="/matrix" element={<MatrixPage />} />
               <Route path="/flows" element={<FlowsTablePage />} />
               <Route path="/history" element={<HistoryPage />} />

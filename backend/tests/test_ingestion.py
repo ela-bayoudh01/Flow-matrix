@@ -34,6 +34,18 @@ def test_import_creates_log_entries_and_flows_with_source_from_ac_policy(session
     sources = {row.source for row in session.query(LogEntry).all()}
     assert sources == {"SITE-A-FWTEST", "SITE-B-FWTEST"}  # pas le nom de fichier "test.log"
 
+    assert summary["sources"] == ["SITE-A-FWTEST", "SITE-B-FWTEST"]
+    assert summary["new_sources"] == ["SITE-A-FWTEST", "SITE-B-FWTEST"]  # rien n'existait avant
+
+
+def test_reimporting_an_already_known_source_is_not_reported_as_new(session):
+    import_log_file(session, _file_of(ALLOW_HTTPS_LINE), "test.log")  # SITE-A-FWTEST déjà connu
+
+    summary = import_log_file(session, _file_of(ALLOW_HTTPS_LINE, SITE_B_ALLOW_LINE), "test2.log")
+
+    assert summary["sources"] == ["SITE-A-FWTEST", "SITE-B-FWTEST"]
+    assert summary["new_sources"] == ["SITE-B-FWTEST"]  # seul SITE-B-FWTEST est vraiment nouveau
+
 
 def test_two_lines_of_the_same_communication_produce_a_single_flow(session):
     summary = import_log_file(session, _file_of(ALLOW_HTTPS_LINE, ALLOW_HTTPS_LINE_REPEAT), "test.log")
