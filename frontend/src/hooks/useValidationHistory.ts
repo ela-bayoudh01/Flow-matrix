@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 
-export function useValidationHistory(flowId?: number) {
+export function useValidationHistory(flowId?: number, q?: string) {
   return useQuery({
-    queryKey: ["validation-history", flowId],
+    queryKey: ["validation-history", flowId, q],
     // Volume attendu faible en V1 (cf. docs/08-historique-des-validations.md) -- une seule
     // page de 500 suffit, pas besoin de pagination serveur pour l'instant.
-    queryFn: () => api.getValidationHistory({ flowId, limit: 500 }),
+    queryFn: () => api.getValidationHistory({ flowId, q, limit: 500 }),
   });
 }

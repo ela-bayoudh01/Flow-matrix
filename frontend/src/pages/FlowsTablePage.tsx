@@ -3,24 +3,53 @@ import Stack from "@mui/material/Stack";
 import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
+import TextField from "@mui/material/TextField";
+import MenuItem from "@mui/material/MenuItem";
 import { useState } from "react";
 import { useFlows, useQualifyFlows } from "../hooks/useFlows";
+import { useSourceOptions } from "../hooks/useSourceOptions";
 import { FlowsTable } from "../components/flows/FlowsTable";
 import { FlowsSummaryBar } from "../components/flows/FlowsSummaryBar";
 import { FilterBar } from "../components/filters/FilterBar";
+import { KeywordSearchField } from "../components/common/KeywordSearchField";
 import { TableSkeleton } from "../components/common/TableSkeleton";
 import { StatCardsSkeleton } from "../components/common/StatCardsSkeleton";
 import type { FlowFilterValues } from "../api/types";
 
 export function FlowsTablePage() {
   const [filters, setFilters] = useState<FlowFilterValues>({});
-  const { data, isLoading, isError, error } = useFlows({ ...filters, limit: 500 });
+  const [q, setQ] = useState("");
+  const { data, isLoading, isError, error } = useFlows({ ...filters, q, limit: 500 });
   const qualifyFlows = useQualifyFlows();
+  // Filtre "Source (firewall)" (2026-09-11, demande de l'encadrant) -- même principe que le
+  // sélecteur de ValidationCyclePage.tsx (liste déroulante dérivée de useSourceOptions,
+  // jamais une liste codée en dur), mais optionnel ici : "Toutes" par défaut, pas de source
+  // imposée -- Table des flux continue d'accumuler et d'afficher tous les firewalls importés
+  // ensemble tant que rien n'est choisi. Pilote directement filters.source (même clé que le
+  // champ libre "Source (site)" de FilterBar, masqué ci-dessous via hideSourceFilter pour
+  // éviter deux contrôles concurrents sur le même filtre).
+  const sourceOptions = useSourceOptions();
 
   return (
     <Box sx={{ p: 3 }}>
-      <Stack direction="row" spacing={2} sx={{ alignItems: "center", mb: 2 }}>
+      <Stack direction="row" spacing={2} sx={{ alignItems: "center", mb: 2, flexWrap: "wrap" }}>
         <Typography variant="h5">Table des flux</Typography>
+        <TextField
+          select
+          size="small"
+          label="Source (firewall)"
+          value={filters.source ?? ""}
+          onChange={(e) => setFilters({ ...filters, source: e.target.value || undefined })}
+          sx={{ minWidth: 220 }}
+        >
+          <MenuItem value="">Toutes les sources</MenuItem>
+          {sourceOptions.map((s) => (
+            <MenuItem key={s} value={s}>
+              {s}
+            </MenuItem>
+          ))}
+        </TextField>
+        <KeywordSearchField value={q} onChange={setQ} />
         <Button
           variant="outlined"
           size="small"
@@ -54,7 +83,7 @@ export function FlowsTablePage() {
         </Alert>
       )}
 
-      <FilterBar value={filters} onChange={setFilters} />
+      <FilterBar value={filters} onChange={setFilters} hideSourceFilter />
 
       {isLoading && (
         <>

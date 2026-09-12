@@ -11,6 +11,7 @@ import { RecommendationsTable } from "../components/recommendations/Recommendati
 import { RecommendationsLegend } from "../components/recommendations/RecommendationsLegend";
 import { RecommendationDetailDrawer } from "../components/recommendations/RecommendationDetailDrawer";
 import { TableSkeleton } from "../components/common/TableSkeleton";
+import { KeywordSearchField } from "../components/common/KeywordSearchField";
 import { FINDING_TYPE_LABELS } from "../theme/colors";
 import type { RecommendationFilters } from "../api/types";
 
@@ -24,8 +25,9 @@ export function RecommendationsPage() {
   // `data.items` (pas une copie figée au moment du clic), sinon "Traiter"/"Rejeter" laisse le
   // panneau afficher l'ancien statut et les boutons alors que la liste, elle, est déjà à jour.
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [q, setQ] = useState("");
 
-  const { data, isLoading, isError, error } = useRecommendations(filters);
+  const { data, isLoading, isError, error } = useRecommendations({ ...filters, q });
   const runRecommendations = useRunRecommendations();
   const selected = data?.items.find((r) => r.id === selectedId) ?? null;
 
@@ -90,6 +92,8 @@ export function RecommendationsPage() {
         >
           Lancer l'analyse
         </Button>
+
+        <KeywordSearchField value={q} onChange={setQ} />
       </Stack>
 
       {runRecommendations.isSuccess && (
@@ -110,7 +114,10 @@ export function RecommendationsPage() {
       {isLoading && <TableSkeleton />}
       {isError && <Alert severity="error">{(error as Error).message}</Alert>}
 
-      {data && data.items.length === 0 && (
+      {data && data.items.length === 0 && q && (
+        <Alert severity="info">Aucune recommandation ne correspond à "{q}".</Alert>
+      )}
+      {data && data.items.length === 0 && !q && (
         <Alert severity="info">
           Aucune recommandation pour ces filtres -- lance une analyse si aucune n'a encore été
           exécutée, ou élargis le filtre de statut.

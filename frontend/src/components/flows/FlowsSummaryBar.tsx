@@ -19,14 +19,22 @@ export function StatTile({
   value,
   icon: Icon,
   color,
+  onClick,
 }: {
   label: string;
   value: number | string;
   icon?: SvgIconComponent;
   color?: string;
+  // Point d'entrée vers une vue filtrée (2026-09-10, demande de l'encadrant -- tuile
+  // Dashboard "Règles non appliquées") -- optionnel, la tuile reste un simple affichage sinon.
+  onClick?: () => void;
 }) {
   return (
-    <Card variant="outlined" sx={{ minWidth: 150, borderLeft: color ? `3px solid ${color}` : undefined }}>
+    <Card
+      variant="outlined"
+      onClick={onClick}
+      sx={{ minWidth: 150, borderLeft: color ? `3px solid ${color}` : undefined, cursor: onClick ? "pointer" : "default" }}
+    >
       <CardContent sx={{ display: "flex", alignItems: "center", gap: 1.5, "&:last-child": { pb: 2 } }}>
         {Icon && (
           <Box sx={{ display: "flex", color: color ?? "text.secondary" }}>

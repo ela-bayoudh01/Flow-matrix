@@ -4,7 +4,7 @@ Outil d'aide à la décision pour l'équipe réseau de Nouvelair : transforme le
 
 **Stack** : FastAPI + SQLAlchemy + SQLite (backend) · React + TypeScript + MUI + AG Grid (frontend).
 
-**État actuel** : projet fonctionnellement complet -- backend (6 moteurs : Parser/Flow/Matrix/Qualification/Recommendation/ACL Engines, historique de validation) et frontend (7 pages : Dashboard, Import, Matrice, Table des flux, Historique, Recommandations, Propositions ACL), tous vérifiés sur les vraies données de `flow_matrix.db`. Passage de design professionnel effectué (sidebar, thème MUI personnalisé, palette calée sur la méthode data-viz, animations). Page Import ajoutée (upload de logs + enchaînement qualification/recommandations depuis l'interface). Prochaine étape à définir avec Loulou.
+**État actuel** (2026-09-11) : projet fonctionnellement complet -- backend (7 moteurs : Parser/Flow/Matrix/Qualification/Recommendation/ACL/Validation Cycle Engines) et frontend (9 pages ; 6 actives en navigation -- Dashboard, Import, Matrice, Table des flux, Historique, Cycle de validation -- + 2 pages fonctionnelles mais mises en sourdine -- Recommandations, Propositions ACL, cf. `docs/perspectives.md` -- + Politiques de sous-réseau, fusionnée dans Cycle de validation). Passage de design professionnel effectué (sidebar, thème MUI personnalisé, palette calée sur la méthode data-viz, animations). Cycle de validation périodique **par source** : diff par flux/cellule/sous-réseau, décisions "Changer la règle" (`decided_action`, statut "Règle non appliquée") et "Déclarer la réclamation" (`RuleEnforcementClaim`), rapport de clôture PDF, tableau principal désormais regroupé par sous-réseau CIDR avec politiques de sous-réseau intégrées (`NetworkPolicy`, voir `docs/13`). Historique des imports (`ImportLog`) visible en permanence sur la page Import. Filtre AG Grid simplifié (un champ + Entrée, sans menu ET/OU) sur les colonnes filtrables. 278 tests backend, tous passants. **`flow_matrix.db` remis à zéro plusieurs fois à la demande de Loulou entre deux phases de test -- son état exact (vide ou réimporté) n'est donc jamais garanti par ce document, à vérifier en direct si besoin.** Prochaine étape à définir avec Loulou (cf. `docs/00` §9, `docs/perspectives.md`).
 
 **Données sensibles** : `backend/data/raw_logs/`, `backend/flow_matrix.db` et tout `docs/` contiennent de vraies données Nouvelair (IP, zones, sites) — gitignorés, jamais commités. Le code (y compris les tests) n'utilise que des données fictives.
 
@@ -27,6 +27,8 @@ Outil d'aide à la décision pour l'équipe réseau de Nouvelair : transforme le
 | `docs/10-comprendre-le-volume-de-donnees.md` | Pourquoi des cellules à "0 o" : lecture des octets mesurés par le firewall |
 | `docs/11-acl-engine.md` | Propositions de règles ACL (create/tighten/revoke), fiche structurée FTD/FMC |
 | `docs/12-checklist-apres-import.md` | Ordre exact des étapes à relancer après un nouvel import |
+| `docs/13-cycle-de-validation.md` | Baseline "Matrice Validée", diff par flux/cellule/sous-réseau, `decided_action`, réclamations, politiques de sous-réseau |
+| `docs/perspectives.md` | Pistes d'évolution future (Recommendation/ACL Engine mis en sourdine, archivage à froid, héritage de politique de sous-réseau, etc.) |
 | `docs/frontend/00-architecture.md` | Structure des pages/composants, choix techniques frontend |
 | `docs/frontend/01-setup-et-flows-table.md` | Setup React/Vite, première page (table des flux) |
 | `docs/frontend/02-matrix-page.md` | Page matrice : construction, coloration, panneau de détail |

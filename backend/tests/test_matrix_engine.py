@@ -18,25 +18,39 @@ def session():
 
 
 def _seed(session):
+    # cycle_* mirrorent exactement les champs lifetime -- situation réelle avant toute
+    # clôture de cycle (flow_engine.consolidate() incrémente les deux ensemble depuis 0, cf.
+    # Flow). build_matrix() agrège désormais sur cycle_* (2026-09-12, correction du bug
+    # lifetime/cycle) : sans ce miroir, ces 3 Flow auraient cycle_occurrence_count == 0 et
+    # disparaîtraient entièrement de la matrice, cassant les assertions ci-dessous qui datent
+    # d'avant cette correction mais restent valides une fois le miroir en place.
     flows = [
         Flow(
             source="SITE-A-FWTEST", src_ip="10.10.1.1", dst_ip="203.0.113.10", dst_port=443,
             protocol="tcp", ingress_zone="Users_Zone", egress_zone="Internet_Zone",
             occurrence_count=2, allow_count=2, block_count=0, dominant_action="Allow",
             total_initiator_bytes=100, total_responder_bytes=200, total_connection_duration=10,
+            cycle_occurrence_count=2, cycle_allow_count=2, cycle_block_count=0, cycle_dominant_action="Allow",
+            cycle_total_initiator_bytes=100, cycle_total_responder_bytes=200, cycle_total_connection_duration=10,
             criticality_label="low",
         ),
         Flow(
             source="SITE-A-FWTEST", src_ip="10.10.1.2", dst_ip="203.0.113.20", dst_port=445,
             protocol="tcp", ingress_zone="Users_Zone", egress_zone="Internet_Zone",
             occurrence_count=1, allow_count=0, block_count=1, dominant_action="Block",
-            total_initiator_bytes=10, total_responder_bytes=0, criticality_label="high",
+            total_initiator_bytes=10, total_responder_bytes=0,
+            cycle_occurrence_count=1, cycle_allow_count=0, cycle_block_count=1, cycle_dominant_action="Block",
+            cycle_total_initiator_bytes=10, cycle_total_responder_bytes=0,
+            criticality_label="high",
         ),
         Flow(
             source="SITE-B-FWTEST", src_ip="10.20.1.1", dst_ip="10.20.2.1", dst_port=139,
             protocol="tcp", ingress_zone="DMZ_Zone", egress_zone="OPS_Zone",
             occurrence_count=5, allow_count=5, block_count=0, dominant_action="Allow",
-            total_initiator_bytes=50, total_responder_bytes=50, criticality_label=None,
+            total_initiator_bytes=50, total_responder_bytes=50,
+            cycle_occurrence_count=5, cycle_allow_count=5, cycle_block_count=0, cycle_dominant_action="Allow",
+            cycle_total_initiator_bytes=50, cycle_total_responder_bytes=50,
+            criticality_label=None,
         ),
     ]
     session.add_all(flows)
@@ -129,6 +143,7 @@ def test_flows_with_no_zone_get_an_explicit_label_not_hidden(session):
             source="SITE-B-FWTEST", src_ip="10.20.253.61", dst_ip="10.21.32.23", protocol="icmp",
             ingress_zone=None, egress_zone=None, occurrence_count=2, block_count=2,
             dominant_action="Block",
+            cycle_occurrence_count=2, cycle_block_count=2, cycle_dominant_action="Block",
         )
     )
     session.commit()
@@ -211,6 +226,10 @@ def test_timeslot_zone_dimension_is_gated_below_the_minimum_observation_window(s
             source="SITE-A-FWTEST", src_ip="10.10.1.1", dst_ip="203.0.113.10", protocol="tcp",
             ingress_zone="Users_Zone", egress_zone="Internet_Zone",
             first_seen_at=base, last_seen_at=base + timedelta(hours=2),
+            # occurrence_count/cycle_occurrence_count=1 (pas seulement le défault 0) : ce Flow
+            # représente une observation réelle, doit compter dans la matrice (build_matrix()
+            # exclut désormais tout Flow à cycle_occurrence_count == 0, 2026-09-12).
+            occurrence_count=1, cycle_occurrence_count=1,
         )
     )
     session.commit()
@@ -230,11 +249,13 @@ def test_timeslot_zone_dimension_notice_is_none_once_window_is_long_enough(sessi
                 source="SITE-A-FWTEST", src_ip="10.10.1.1", dst_ip="203.0.113.10", protocol="tcp",
                 ingress_zone="Users_Zone", egress_zone="Internet_Zone",
                 first_seen_at=base, last_seen_at=base,
+                occurrence_count=1, cycle_occurrence_count=1,
             ),
             Flow(
                 source="SITE-A-FWTEST", src_ip="10.10.1.2", dst_ip="203.0.113.20", protocol="tcp",
                 ingress_zone="Users_Zone", egress_zone="Internet_Zone",
                 first_seen_at=base, last_seen_at=base + timedelta(days=20),
+                occurrence_count=1, cycle_occurrence_count=1,
             ),
         ]
     )
@@ -259,7 +280,10 @@ def test_dimension_notice_warns_on_a_large_cell_count(session):
     # (LARGE_RESULT_CELL_THRESHOLD), pas spécifique à "ip".
     session.add_all(
         [
-            Flow(source="SITE-A-FWTEST", src_ip=f"10.10.1.{i}", dst_ip=f"203.0.113.{i}", protocol="tcp")
+            Flow(
+                source="SITE-A-FWTEST", src_ip=f"10.10.1.{i}", dst_ip=f"203.0.113.{i}", protocol="tcp",
+                occurrence_count=1, cycle_occurrence_count=1,
+            )
             for i in range(1, 1002)
         ]
     )
@@ -270,3 +294,86 @@ def test_dimension_notice_warns_on_a_large_cell_count(session):
     assert len(result["cells"]) > matrix_engine.LARGE_RESULT_CELL_THRESHOLD
     assert result["notice"] is not None
     assert "volume élevé" in result["notice"]
+
+
+# --- Scope cycle courant (2026-09-12) -- bug de conception réel découvert en testant un
+# réimport, signalé par l'encadrant : la Matrice Réelle affichait l'historique cumulé depuis
+# le tout premier import, pas seulement le cycle/log courant (contrairement au diff de cycle,
+# déjà scopé via cycle_dominant_action depuis la correction du bug "Mixed", 2026-09-06). -----
+
+
+def test_build_matrix_uses_cycle_counters_not_lifetime_ones(session):
+    # Lifetime et cycle DIVERGENT volontairement ici (gros historique lifetime, activité
+    # minime ce cycle) -- si build_matrix() sommait encore les champs lifetime, ce test
+    # échouerait. Situation réelle : un Flow validé il y a plusieurs cycles, très peu
+    # retouché depuis la dernière clôture.
+    session.add(
+        Flow(
+            source="SITE-A-FWTEST", src_ip="10.10.1.1", dst_ip="203.0.113.10", dst_port=443,
+            protocol="tcp", ingress_zone="Users_Zone", egress_zone="Internet_Zone",
+            occurrence_count=500, allow_count=500, block_count=0, dominant_action="Allow",
+            total_initiator_bytes=999_999, total_responder_bytes=999_999, total_connection_duration=99_999,
+            cycle_occurrence_count=1, cycle_allow_count=0, cycle_block_count=1, cycle_dominant_action="Block",
+            cycle_total_initiator_bytes=5, cycle_total_responder_bytes=7, cycle_total_connection_duration=2,
+        )
+    )
+    session.commit()
+
+    cell = matrix_engine.build_matrix(session, dimension="zone")["cells"][0]
+
+    assert cell["flow_count"] == 1
+    assert cell["allow_count"] == 0  # cycle_allow_count, pas allow_count (500)
+    assert cell["block_count"] == 1  # cycle_block_count, pas block_count (0)
+    assert cell["total_bytes"] == 5 + 7  # cycle_total_*, pas 999_999 + 999_999
+    assert cell["total_duration_seconds"] == 2  # cycle_total_connection_duration, pas 99_999
+
+
+def test_build_matrix_excludes_a_flow_untouched_since_the_last_cycle_closure(session):
+    # Décision actée (demande explicite de l'encadrant, 2026-09-12) : un Flow non retouché
+    # depuis la dernière clôture de cycle disparaît ENTIÈREMENT de la Matrice Réelle -- jamais
+    # affiché à 0. flow_count == "flux actifs dans ce cycle", pas "tous les flux jamais
+    # connus" (qui restent, eux, visibles dans la Table des flux -- comportement lifetime
+    # inchangé, hors matrix_engine).
+    session.add_all(
+        [
+            Flow(
+                source="SITE-A-FWTEST", src_ip="10.10.1.1", dst_ip="203.0.113.10", protocol="tcp",
+                ingress_zone="Users_Zone", egress_zone="Internet_Zone",
+                occurrence_count=10, allow_count=10, dominant_action="Allow",
+                cycle_occurrence_count=0, cycle_allow_count=0, cycle_dominant_action=None,  # jamais retouché depuis la clôture
+            ),
+            Flow(
+                source="SITE-A-FWTEST", src_ip="10.10.1.2", dst_ip="203.0.113.20", protocol="tcp",
+                ingress_zone="Users_Zone", egress_zone="Internet_Zone",
+                occurrence_count=1, allow_count=1, dominant_action="Allow",
+                cycle_occurrence_count=1, cycle_allow_count=1, cycle_dominant_action="Allow",  # actif ce cycle
+            ),
+        ]
+    )
+    session.commit()
+
+    result = matrix_engine.build_matrix(session, dimension="zone")
+
+    assert len(result["cells"]) == 1
+    assert result["cells"][0]["flow_count"] == 1  # seul le Flow actif ce cycle compte, pas 2
+
+
+def test_build_matrix_keeps_every_flow_before_any_cycle_has_ever_been_closed(session):
+    # Avant toute clôture pour une source, cycle_occurrence_count == occurrence_count pour
+    # tout Flow réel (flow_engine.consolidate() incrémente les deux ensemble depuis 0) --
+    # aucune régression sur le tout premier cycle, même sans jamais renseigner cycle_* à la
+    # main (situation réelle d'un premier import, pas seulement un fixture de test).
+    session.add(
+        Flow(
+            source="SITE-A-FWTEST", src_ip="10.10.1.1", dst_ip="203.0.113.10", protocol="tcp",
+            ingress_zone="Users_Zone", egress_zone="Internet_Zone",
+            occurrence_count=3, allow_count=3, dominant_action="Allow",
+            cycle_occurrence_count=3, cycle_allow_count=3, cycle_dominant_action="Allow",
+        )
+    )
+    session.commit()
+
+    result = matrix_engine.build_matrix(session, dimension="zone")
+
+    assert len(result["cells"]) == 1
+    assert result["cells"][0]["flow_count"] == 1

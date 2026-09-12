@@ -76,6 +76,22 @@ def build_matrix(session: Session, dimension: str = DEFAULT_DIMENSION, **filters
     seule ligne/colonne plutôt que de nécessiter un filtrage séparé côté frontend : le
     calcul est refait avec le filtre appliqué, pas juste caché après coup (sinon les totaux
     affichés seraient faux).
+
+    Scopé au CYCLE COURANT depuis le 2026-09-12 (bug de conception réel découvert en testant
+    un réimport, signalé par l'encadrant) : agrégats sur les compteurs `Flow.cycle_*` (jamais
+    réinitialisés -- remis à zéro à chaque `validation_cycle_engine.close_cycle()` de la
+    source du flux, cf. modèle Flow) plutôt que sur les champs lifetime (`allow_count`,
+    `total_initiator_bytes`...), ET un flux jamais retouché depuis la dernière clôture
+    (`cycle_occurrence_count == 0`) est exclu entièrement de la cellule -- pas affiché à 0.
+    Avant toute clôture pour la source d'un flux, `cycle_occurrence_count` vaut exactement
+    `occurrence_count` (les deux s'incrémentent ensemble depuis 0, cf. flow_engine.consolidate)
+    donc `cycle_occurrence_count > 0` est toujours vrai dans ce cas : aucune régression tant
+    qu'aucun cycle n'a encore été clôturé. Même principe déjà en place dans le diff de cycle
+    (Services/validation_cycle_engine.py, STRUCTURAL_FIELDS/cycle_dominant_action, bug "Mixed"
+    corrigé le 2026-09-06) -- ici aligné pour la Matrice Réelle elle-même, pas seulement son
+    diff. La Table des flux et le Qualification Engine continuent d'utiliser les champs
+    lifetime, inchangés (cf. docs/02 §Flow) : "depuis toujours" reste un besoin réel par
+    ailleurs, seule la Matrice Réelle doit refléter "ce cycle" (demande explicite).
     """
     if dimension not in DIMENSIONS:
         raise ValueError(f"Dimension inconnue : {dimension!r}. Valeurs possibles : {sorted(DIMENSIONS)}")
@@ -92,11 +108,11 @@ def build_matrix(session: Session, dimension: str = DEFAULT_DIMENSION, **filters
             row_col,
             col_col,
             func.count(Flow.id).label("flow_count"),
-            func.coalesce(func.sum(Flow.allow_count), 0).label("allow_count"),
-            func.coalesce(func.sum(Flow.block_count), 0).label("block_count"),
-            func.coalesce(func.sum(Flow.total_initiator_bytes + Flow.total_responder_bytes), 0).label("total_bytes"),
-            func.coalesce(func.sum(Flow.total_connection_duration), 0).label("total_duration_seconds"),
-        ),
+            func.coalesce(func.sum(Flow.cycle_allow_count), 0).label("allow_count"),
+            func.coalesce(func.sum(Flow.cycle_block_count), 0).label("block_count"),
+            func.coalesce(func.sum(Flow.cycle_total_initiator_bytes + Flow.cycle_total_responder_bytes), 0).label("total_bytes"),
+            func.coalesce(func.sum(Flow.cycle_total_connection_duration), 0).label("total_duration_seconds"),
+        ).filter(Flow.cycle_occurrence_count > 0),
         filters,
     ).group_by(row_col, col_col)
 
@@ -106,7 +122,7 @@ def build_matrix(session: Session, dimension: str = DEFAULT_DIMENSION, **filters
             col_col,
             Flow.criticality_label.label("criticality_label"),
             func.count(Flow.id).label("count"),
-        ),
+        ).filter(Flow.cycle_occurrence_count > 0),
         filters,
     ).group_by(row_col, col_col, Flow.criticality_label)
 

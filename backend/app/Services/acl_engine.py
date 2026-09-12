@@ -23,11 +23,13 @@ structurée, ressaisie manuellement dans FMC, est utilisable.
 
 import collections
 import re
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..models import AclProposal, Flow, RuleRecommendation, RULE_NAME_UNSET, ZONE_UNSET
+from ..models import AclProposal, Flow, RuleRecommendation, ValidationCycle, RULE_NAME_UNSET, ZONE_UNSET
+from . import validation_cycle_engine
 from .recommendation_engine import DEFAULT_ACTION_RULE_NAME
 
 # Au-delà de ce nombre d'hôtes distincts, on n'énumère plus (même principe que
@@ -35,43 +37,93 @@ from .recommendation_engine import DEFAULT_ACTION_RULE_NAME
 NETWORK_ENUMERATION_CAP = 50
 
 
-def run(session: Session, source: Optional[str] = None) -> dict:
+def run(session: Session, source: Optional[str] = None, since: Optional[datetime] = None) -> dict:
     """Exécute les 3 générateurs, upsert les propositions, commit. Idempotent : ré-exécutable
     sans dupliquer ni écraser une revue humaine déjà faite (même pattern que
     Services/recommendation_engine.py, éprouvé et réutilisé tel quel).
-    """
-    create_findings = _generate_create(session, source)
-    tighten_findings = _generate_tighten(session, source)
-    revoke_findings = _generate_revoke(session, source)
 
-    summary = _upsert_proposals(session, create_findings + tighten_findings + revoke_findings)
+    `since` (optionnel) restreint aux flux approuvés / findings acquittés **depuis** cette
+    date -- utilisé par `run_for_cycle()` pour ne considérer que ce qui vient d'être validé
+    dans le cycle courant, jamais tout l'historique. `since=None` (comportement par défaut,
+    utilisé par le déclenchement manuel `POST /api/acl-proposals/run` sans cycle) garde le
+    comportement d'origine : tout l'historique approuvé/acquitté, sans fenêtre de temps.
+    """
+    create_findings, create_detail = _generate_create(session, source, since)
+    tighten_findings = _generate_tighten(session, source, since)
+    revoke_findings = _generate_revoke(session, source, since)
+
+    # merge=True (since is not None) : ce `run()` ne voit qu'une tranche partielle des flux
+    # approuvés (depuis le cycle précédent), jamais la vérité complète -- fusionner avec
+    # l'existant plutôt que remplacer, sinon un flux approuvé lors d'un cycle antérieur
+    # disparaîtrait de la proposition à chaque nouveau cycle. merge=False (rescan complet,
+    # since=None) garde le comportement d'origine : remplacer, pour bien retirer un flux qui
+    # ne correspond plus (ex. re-bloqué depuis), ce qu'une fusion ne ferait jamais.
+    summary = _upsert_proposals(session, create_findings + tighten_findings + revoke_findings, merge=since is not None)
     summary["by_intent"] = {
         "create": len(create_findings),
         "tighten": len(tighten_findings),
         "revoke": len(revoke_findings),
     }
+    summary["create_detail"] = create_detail
     return summary
+
+
+def run_for_cycle(session: Session, cycle: ValidationCycle) -> dict:
+    """Génère les propositions ACL pour la source d'un ValidationCycle qui vient d'être
+    clôturé, à la demande explicite de l'encadrant (2026-08-21) : l'ACL Engine ne doit plus
+    être une action indépendante permanente, mais une étape du cycle -- déclenchée
+    manuellement juste après la clôture (jamais automatique), scopée aux flux
+    approuvés/acquittés depuis le cycle précédent de CETTE source.
+
+    Fenêtre : `since = previous_cycle.closed_at` (le cycle qu'on vient de remplacer), ou
+    `None` s'il s'agit du tout premier cycle de cette source (alors équivalent à l'ancien
+    comportement global, mais déjà borné à cette seule source). Choix délibéré vs. limiter
+    strictement aux flux "nouveau"/"modifie" du diff de ce cycle : un flux resté "pending"
+    plus longtemps que son propre cycle (approuvé en retard, après coup, depuis la Table des
+    flux) ne serait alors plus jamais repris par aucun cycle suivant ("strandé") -- borner sur
+    `validated_at`/`reviewed_at` couvre aussi ce cas, sans jamais oublier un flux approuvé.
+    """
+    previous = validation_cycle_engine.previous_cycle_for(session, cycle)
+    since = previous.closed_at if previous else None
+    return run(session, source=cycle.source, since=since)
 
 
 # --- "create" : Flow approuvé encore sous Default Action -----------------------------------
 
 
-def _generate_create(session: Session, source: Optional[str]) -> list[dict]:
-    query = session.query(Flow).filter(
-        Flow.validation_status == "approved", Flow.last_access_control_rule_name == DEFAULT_ACTION_RULE_NAME
-    )
+def _generate_create(session: Session, source: Optional[str], since: Optional[datetime] = None) -> tuple[list[dict], dict]:
+    """Retourne (findings, detail). `detail` existe pour que "0 proposition" ne ressemble
+    jamais à un échec silencieux (cas réel rencontré : 4 flux approuvés, 0 proposition, aucun
+    moyen de savoir sans creuser la base à la main que les 4 étaient déjà couverts par une
+    règle nommée -- rien à créer, pas un bug) : `considered` = tous les flux approuvés dans le
+    périmètre (source + fenêtre `since`), `already_covered` = ceux déjà régis par une règle
+    explicite (pas de proposition "create" possible), `eligible` = ceux réellement sous
+    Default Action (`considered - already_covered`, ce qui alimente les findings ci-dessous).
+    """
+    query = session.query(Flow).filter(Flow.validation_status == "approved")
     if source is not None:
         query = query.filter(Flow.source == source)
+    if since is not None:
+        query = query.filter(Flow.validated_at > since)
+
+    approved_flows = query.all()
+    eligible_flows = [f for f in approved_flows if f.last_access_control_rule_name == DEFAULT_ACTION_RULE_NAME]
+    detail = {
+        "considered": len(approved_flows),
+        "eligible": len(eligible_flows),
+        "already_covered": len(approved_flows) - len(eligible_flows),
+    }
 
     groups: dict[tuple, list[Flow]] = collections.defaultdict(list)
-    for flow in query.all():
+    for flow in eligible_flows:
         key = (flow.source, flow.ingress_zone or ZONE_UNSET, flow.egress_zone or ZONE_UNSET, flow.protocol, flow.dst_port)
         groups[key].append(flow)
 
-    return [
+    findings = [
         _build_create_proposal(session, src, izone, ezone, protocol, port, flows)
         for (src, izone, ezone, protocol, port), flows in groups.items()
     ]
+    return findings, detail
 
 
 def _build_create_proposal(
@@ -132,24 +184,28 @@ def _format_create_rule_text(name, ingress_zone, egress_zone, protocol, dst_port
 # --- "tighten" : RuleRecommendation trop_permissive acquittée ------------------------------
 
 
-def _generate_tighten(session: Session, source: Optional[str]) -> list[dict]:
+def _generate_tighten(session: Session, source: Optional[str], since: Optional[datetime] = None) -> list[dict]:
     query = session.query(RuleRecommendation).filter(
         RuleRecommendation.finding_type == "trop_permissive", RuleRecommendation.status == "acknowledged"
     )
     if source is not None:
         query = query.filter(RuleRecommendation.source == source)
+    if since is not None:
+        query = query.filter(RuleRecommendation.reviewed_at > since)
     return [_build_rule_targeted_proposal(r, intent="tighten", proposed_action="Allow") for r in query.all()]
 
 
 # --- "revoke" : RuleRecommendation obsolete acquittée ---------------------------------------
 
 
-def _generate_revoke(session: Session, source: Optional[str]) -> list[dict]:
+def _generate_revoke(session: Session, source: Optional[str], since: Optional[datetime] = None) -> list[dict]:
     query = session.query(RuleRecommendation).filter(
         RuleRecommendation.finding_type == "obsolete", RuleRecommendation.status == "acknowledged"
     )
     if source is not None:
         query = query.filter(RuleRecommendation.source == source)
+    if since is not None:
+        query = query.filter(RuleRecommendation.reviewed_at > since)
     return [_build_rule_targeted_proposal(r, intent="revoke", proposed_action="Remove") for r in query.all()]
 
 
@@ -251,10 +307,19 @@ def slug(value: Optional[str]) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", value or "ANY").strip("_") or "ANY"
 
 
-def _upsert_proposals(session: Session, findings: list[dict]) -> dict:
+def _upsert_proposals(session: Session, findings: list[dict], merge: bool = False) -> dict:
     """Même logique que Services/recommendation_engine.py::_upsert_findings : crée les
     nouvelles propositions, met à jour le contenu de celles qui existent déjà, ne touche
     jamais `status`/`validated_by`/`validated_at` d'une proposition déjà revue par un humain.
+
+    `merge` (pour "create" uniquement) : `finding["flows"]` fusionné avec `existing.flows`
+    plutôt que remplacé. Nécessaire quand `run()` a été appelé avec `since` (cf.
+    run_for_cycle) : dans ce cas, `finding["flows"]` n'est qu'une tranche partielle (les flux
+    nouvellement approuvés depuis le cycle précédent), pas la vérité complète -- un
+    remplacement ferait disparaître les flux déjà rattachés à un cycle antérieur. `merge=False`
+    (rescan complet, `since=None`) garde le remplacement d'origine : `finding["flows"]` est
+    alors la liste complète et à jour, remplacer permet de retirer un flux qui ne correspond
+    plus (ex. re-bloqué depuis), ce qu'une fusion ne ferait jamais.
     """
     created, updated = 0, 0
     for finding in findings:
@@ -281,13 +346,30 @@ def _upsert_proposals(session: Session, findings: list[dict]) -> dict:
             )
             created += 1
         else:
-            existing.src_networks = finding["src_networks"]
-            existing.dst_networks = finding["dst_networks"]
+            if finding["intent"] == "create" and finding["flows"]:
+                merged_flows = (
+                    list({f.id: f for f in existing.flows + finding["flows"]}.values()) if merge else finding["flows"]
+                )
+                src_networks = network_summary(sorted({f.src_ip for f in merged_flows}))
+                dst_networks = network_summary(sorted({f.dst_ip for f in merged_flows}))
+                existing.flows = merged_flows
+                existing.src_networks = src_networks
+                existing.dst_networks = dst_networks
+                rationale = dict(finding["rationale"])
+                rationale["flow_ids"] = [f.id for f in merged_flows]
+                rationale["distinct_src_ip"] = src_networks["count"]
+                rationale["distinct_dst_ip"] = dst_networks["count"]
+                existing.rationale = rationale
+                existing.proposed_rule_text = _format_create_rule_text(
+                    existing.suggested_rule_name, finding["ingress_zone"], finding["egress_zone"],
+                    finding["protocol"], finding["dst_port"], src_networks, dst_networks, merged_flows,
+                )
+            else:
+                existing.src_networks = finding["src_networks"]
+                existing.dst_networks = finding["dst_networks"]
+                existing.rationale = finding["rationale"]
+                existing.proposed_rule_text = finding["proposed_rule_text"]
             existing.source_recommendation_id = finding["source_recommendation_id"]
-            existing.rationale = finding["rationale"]
-            existing.proposed_rule_text = finding["proposed_rule_text"]
-            if finding["flows"]:
-                existing.flows = finding["flows"]
             updated += 1
 
     session.commit()

@@ -54,6 +54,12 @@ def consolidate(session: Session, log_entry: LogEntry, flow_cache: Optional[Flow
             total_initiator_bytes=0,
             total_responder_bytes=0,
             total_connection_duration=0,
+            cycle_occurrence_count=0,
+            cycle_allow_count=0,
+            cycle_block_count=0,
+            cycle_total_initiator_bytes=0,
+            cycle_total_responder_bytes=0,
+            cycle_total_connection_duration=0,
         )
         session.add(flow)
         # Pas de flush() ici : SQLAlchemy résout la relation log_entry.flow -> flow (et la FK
@@ -63,15 +69,25 @@ def consolidate(session: Session, log_entry: LogEntry, flow_cache: Optional[Flow
         flow_cache[key] = flow
 
     flow.occurrence_count += 1
+    flow.cycle_occurrence_count += 1
     if log_entry.access_control_rule_action == "Allow":
         flow.allow_count += 1
+        flow.cycle_allow_count += 1
     elif log_entry.access_control_rule_action == "Block":
         flow.block_count += 1
+        flow.cycle_block_count += 1
     flow.dominant_action = _dominant_action(flow.allow_count, flow.block_count)
+    # cycle_dominant_action (2026-09-06) : même dérivation, mais sur le tally "depuis la
+    # dernière clôture de cycle" plutôt que lifetime -- remis à zéro par
+    # validation_cycle_engine.close_cycle(), jamais ici. Voir Flow.cycle_dominant_action.
+    flow.cycle_dominant_action = _dominant_action(flow.cycle_allow_count, flow.cycle_block_count)
 
     flow.total_initiator_bytes += log_entry.initiator_bytes or 0
     flow.total_responder_bytes += log_entry.responder_bytes or 0
     flow.total_connection_duration += log_entry.connection_duration or 0
+    flow.cycle_total_initiator_bytes += log_entry.initiator_bytes or 0
+    flow.cycle_total_responder_bytes += log_entry.responder_bytes or 0
+    flow.cycle_total_connection_duration += log_entry.connection_duration or 0
 
     # Valeur dominante/dernière observée : mise à jour seulement si cette ligne est la
     # plus récente vue jusqu'ici (par FirstPacketSecond), pas par ordre d'insertion --

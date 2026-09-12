@@ -7,8 +7,10 @@ import { MatrixPage } from "./pages/MatrixPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ImportPage } from "./pages/ImportPage";
 import { HistoryPage } from "./pages/HistoryPage";
+import { ValidationCyclePage } from "./pages/ValidationCyclePage";
 import { RecommendationsPage } from "./pages/RecommendationsPage";
 import { AclProposalsPage } from "./pages/AclProposalsPage";
+import { NetworkPoliciesPage } from "./pages/NetworkPoliciesPage";
 
 function App() {
   return (
@@ -24,8 +26,10 @@ function App() {
               <Route path="/matrix" element={<MatrixPage />} />
               <Route path="/flows" element={<FlowsTablePage />} />
               <Route path="/history" element={<HistoryPage />} />
+              <Route path="/validation-cycle" element={<ValidationCyclePage />} />
               <Route path="/recommendations" element={<RecommendationsPage />} />
               <Route path="/acl-proposals" element={<AclProposalsPage />} />
+              <Route path="/network-policies" element={<NetworkPoliciesPage />} />
             </Routes>
           </PageTransition>
         </Box>

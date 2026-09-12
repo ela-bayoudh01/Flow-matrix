@@ -10,20 +10,31 @@ import CloudUploadOutlinedIcon from "@mui/icons-material/CloudUploadOutlined";
 import GridViewOutlinedIcon from "@mui/icons-material/GridViewOutlined";
 import ListAltOutlinedIcon from "@mui/icons-material/ListAltOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import TipsAndUpdatesOutlinedIcon from "@mui/icons-material/TipsAndUpdatesOutlined";
-import RuleOutlinedIcon from "@mui/icons-material/RuleOutlined";
+import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 
+// "Recommandations" et "Propositions ACL" retirées de la navigation le 2026-09-03, demande
+// de l'encadrant après démo (pas jugées utiles pour l'instant, on se concentre sur Matrice +
+// Cycle de validation) -- AUCUN code/endpoint/modèle/test supprimé, les deux pages restent
+// pleinement fonctionnelles via leurs routes directes (/recommendations, /acl-proposals,
+// cf. App.tsx) pour une réactivation immédiate si le besoin revient : juste ces deux lignes
+// à restaurer ici (imports RuleOutlinedIcon/TipsAndUpdatesOutlinedIcon et entrées NAV_ITEMS).
+//
+// "Politiques de sous-réseau" retirée à son tour le 2026-09-11 (même principe : demande de
+// l'encadrant après démo) -- fusionnée dans "Cycle de validation" (tableau par sous-réseau +
+// formulaire de création + politiques enregistrées, cf. ValidationCyclePage.tsx). Page,
+// composants, endpoints, tests intacts, route directe (/network-policies) toujours
+// fonctionnelle -- juste cette ligne à restaurer ici (import LanOutlinedIcon en plus) si le
+// besoin d'une page séparée revient.
 const NAV_ITEMS = [
   { label: "Dashboard", to: "/dashboard", icon: SpaceDashboardOutlinedIcon },
   { label: "Import", to: "/import", icon: CloudUploadOutlinedIcon },
   { label: "Matrice", to: "/matrix", icon: GridViewOutlinedIcon },
   { label: "Table des flux", to: "/flows", icon: ListAltOutlinedIcon },
   { label: "Historique", to: "/history", icon: HistoryOutlinedIcon },
-  { label: "Recommandations", to: "/recommendations", icon: TipsAndUpdatesOutlinedIcon },
-  { label: "Propositions ACL", to: "/acl-proposals", icon: RuleOutlinedIcon },
+  { label: "Cycle de validation", to: "/validation-cycle", icon: CompareArrowsOutlinedIcon },
 ];
 
 const STORAGE_KEY = "sidebar-collapsed";

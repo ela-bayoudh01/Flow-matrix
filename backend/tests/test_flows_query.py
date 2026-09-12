@@ -116,3 +116,62 @@ def test_cell_drill_down_can_combine_with_a_regular_filter(session):
 def test_cell_drill_down_requires_row_and_col_value_together(session):
     with pytest.raises(ValueError):
         list_flows(session, dimension="zone", row_value="Users_Zone")
+
+
+# --- Recherche par mot-clé (demande de l'encadrant, 2026-08-25) ----------------------------
+
+
+def test_keyword_search_matches_across_several_columns(session):
+    _seed(session)
+
+    by_ip = list_flows(session, q="203.0.113.20")
+    assert {f.dst_ip for f in by_ip["items"]} == {"203.0.113.20"}
+
+    by_zone = list_flows(session, q="Internet_Zone")
+    assert by_zone["total_count"] == 3  # les 3 flux seedés partagent cette zone
+
+    by_port = list_flows(session, q="445")
+    assert {f.dst_ip for f in by_port["items"]} == {"203.0.113.20"}  # port -> texte, pas seulement des colonnes texte
+
+
+def test_keyword_search_is_case_insensitive_and_substring(session):
+    _seed(session)
+
+    result = list_flows(session, q="users_zone")  # casse différente de "Users_Zone" en base
+
+    assert result["total_count"] == 3
+
+
+def test_keyword_search_combines_with_other_filters(session):
+    _seed(session)
+
+    result = list_flows(session, q="203.0.113", dominant_action="Block")
+
+    assert result["total_count"] == 1
+    assert result["items"][0].dst_ip == "203.0.113.20"
+
+
+def test_keyword_search_empty_string_matches_everything(session):
+    _seed(session)
+
+    result = list_flows(session, q="")
+
+    assert result["total_count"] == 3
+
+
+def test_keyword_search_no_match_returns_empty(session):
+    _seed(session)
+
+    result = list_flows(session, q="nope-nothing-matches-this")
+
+    assert result["total_count"] == 0
+    assert result["items"] == []
+
+
+def test_keyword_search_also_restricts_the_summary(session):
+    _seed(session)
+
+    result = list_flows(session, q="203.0.113.20")
+
+    assert result["summary"]["total_flows"] == 1
+    assert result["summary"]["criticality_breakdown"] == {"high": 1}

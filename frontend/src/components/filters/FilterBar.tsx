@@ -7,6 +7,7 @@ import Button from "@mui/material/Button";
 import Collapse from "@mui/material/Collapse";
 import type { FlowFilterValues } from "../../api/types";
 import { useZoneOptions } from "../../hooks/useZoneOptions";
+import { displayAxisLabel } from "../../theme/colors";
 
 const ACTION_OPTIONS = ["Allow", "Block", "Mixed"];
 const PROTOCOL_OPTIONS = ["tcp", "udp", "icmp", "ipv6-icmp"];
@@ -18,9 +19,14 @@ const VALIDATION_STATUS_OPTIONS = ["pending", "approved", "blocked"];
 interface FilterBarProps {
   value: FlowFilterValues;
   onChange: (filters: FlowFilterValues) => void;
+  // Cache le champ libre "Source (site)" -- utilisé par les pages qui ont déjà leur propre
+  // sélecteur dédié "Source (firewall)" pilotant le même filtre (ValidationCyclePage.tsx,
+  // toujours propre à une source ; FlowsTablePage.tsx depuis le 2026-09-11, optionnel) :
+  // afficher les deux à la fois prêterait à confusion sur lequel fait réellement foi.
+  hideSourceFilter?: boolean;
 }
 
-export function FilterBar({ value, onChange }: FilterBarProps) {
+export function FilterBar({ value, onChange, hideSourceFilter = false }: FilterBarProps) {
   const [showMore, setShowMore] = useState(false);
   const zoneOptions = useZoneOptions();
 
@@ -82,7 +88,9 @@ export function FilterBar({ value, onChange }: FilterBarProps) {
           <MenuItem value="">Toutes</MenuItem>
           {ACTION_OPTIONS.map((a) => (
             <MenuItem key={a} value={a}>
-              {a}
+              {/* "Mixed" reste la valeur filtrée (dominant_action=Mixed côté API), jamais
+                  affiché tel quel (demande de l'encadrant, 2026-09-06). */}
+              {displayAxisLabel(a)}
             </MenuItem>
           ))}
         </TextField>
@@ -162,14 +170,16 @@ export function FilterBar({ value, onChange }: FilterBarProps) {
             onChange={(e) => set("web_application", e.target.value)}
             sx={{ minWidth: 160 }}
           />
-          <TextField
-            size="small"
-            label="Source (site)"
-            value={value.source ?? ""}
-            onChange={(e) => set("source", e.target.value)}
-            sx={{ minWidth: 160 }}
-            helperText="Nom exact, cf. ACPolicy"
-          />
+          {!hideSourceFilter && (
+            <TextField
+              size="small"
+              label="Source (site)"
+              value={value.source ?? ""}
+              onChange={(e) => set("source", e.target.value)}
+              sx={{ minWidth: 160 }}
+              helperText="Nom exact, cf. ACPolicy"
+            />
+          )}
           <TextField
             select
             size="small"

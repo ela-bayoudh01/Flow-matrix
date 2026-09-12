@@ -125,6 +125,26 @@ class Flow(Base):
     total_responder_bytes: Mapped[int] = mapped_column(default=0)
     total_connection_duration: Mapped[int] = mapped_column(default=0)
 
+    # "Depuis la dernière clôture de cycle" (2026-09-06, demande de l'encadrant) -- même
+    # agrégation que les 7 champs lifetime ci-dessus, incrémentée en parallèle par le Flow
+    # Engine, mais RÉINITIALISÉE à chaque validation_cycle_engine.close_cycle() pour la
+    # source de ce Flow. Corrige un bug réel : dominant_action (lifetime) ne redevient jamais
+    # autre chose que "Mixed" une fois qu'une seule occurrence contradictoire a existé DANS
+    # TOUTE L'HISTOIRE du flow, même des cycles plus tôt -- alors que le comportement du
+    # cycle en cours peut être parfaitement tranché. Sert UNIQUEMENT au Cycle de validation
+    # (diff + affichage "ce cycle") ; ne remplace jamais les champs lifetime ci-dessus, qui
+    # gardent leur sens actuel ("depuis toujours", utilisés notamment par le Qualification
+    # Engine pour son score de fréquence/action). Avant toute clôture pour la source de ce
+    # Flow, ces champs valent exactement les mêmes valeurs que les champs lifetime (les deux
+    # s'incrémentent ensemble depuis 0) -- aucune régression sur un tout premier cycle.
+    cycle_occurrence_count: Mapped[int] = mapped_column(default=0)
+    cycle_allow_count: Mapped[int] = mapped_column(default=0)
+    cycle_block_count: Mapped[int] = mapped_column(default=0)
+    cycle_dominant_action: Mapped[Optional[str]]
+    cycle_total_initiator_bytes: Mapped[int] = mapped_column(default=0)
+    cycle_total_responder_bytes: Mapped[int] = mapped_column(default=0)
+    cycle_total_connection_duration: Mapped[int] = mapped_column(default=0)
+
     # Valeur dominante / dernière observée (recopiée depuis le LogEntry le plus récent)
     ingress_zone: Mapped[Optional[str]]
     egress_zone: Mapped[Optional[str]]
@@ -142,6 +162,18 @@ class Flow(Base):
     validation_status: Mapped[str] = mapped_column(default="pending", index=True)
     validated_by: Mapped[Optional[str]]
     validated_at: Mapped[Optional[datetime]]
+
+    # Décision CIBLE explicite sur l'action (2026-09-03, demande de l'encadrant) -- distincte
+    # de dominant_action (observé dans les logs) ET de validation_status (triage pending/
+    # approved/blocked, inchangé). Renseigné UNIQUEMENT quand le Responsable Réseau inverse
+    # manuellement l'action observée (ex. bloquer un flux actuellement Allow) via le chemin
+    # "inversion" de PATCH .../validation -- jamais par un Valider/Bloquer qui confirme
+    # simplement ce qui est déjà observé. Reste actif (jamais écrasé par autre chose qu'une
+    # nouvelle inversion) tant que le pare-feu ne s'aligne pas -- sert de référence au diff du
+    # Cycle de validation suivant (recopié dans FlowSnapshot.decided_action à la clôture) pour
+    # détecter une décision humaine toujours pas appliquée ("regle_non_appliquee"), distinct
+    # d'une simple dérive organique du trafic ("modifie"). Voir docs/13-cycle-de-validation.md.
+    decided_action: Mapped[Optional[str]]  # "Allow" | "Block" | None
 
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
 
@@ -276,6 +308,112 @@ class FlowValidationHistory(Base):
     validated_by: Mapped[Optional[str]]
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
+    # Renseignés UNIQUEMENT sur le chemin "inversion d'action" (2026-09-03) -- None sur un
+    # Valider/Bloquer classique qui ne fait que confirmer l'action déjà observée. Figent ce
+    # qui était vrai à l'instant de LA décision (jamais relus depuis Flow, qui continue
+    # d'évoluer) : nécessaire pour que la fiche PDF générée plus tard depuis cette ligne
+    # reste fidèle à ce qui a été décidé, même si le Flow a changé entretemps.
+    justification: Mapped[Optional[str]]
+    observed_action_before: Mapped[Optional[str]]  # dominant_action au moment de la décision
+    decided_action: Mapped[Optional[str]]  # "Allow" | "Block" -- la cible décidée
+
+
+class ValidationCycle(Base):
+    """Clôture d'un cycle de validation périodique : fige l'état de tous les Flow d'**une
+    source** (un cycle = un firewall/site, jamais plusieurs mélangés) pour servir de
+    référence ("Matrice Validée") au cycle suivant de cette même source. Demande directe de
+    l'encadrant (2026-08-19) : comparer la Matrice Réelle (l'état courant, déjà dynamique --
+    Matrix/Flows Engine) à la dernière baseline validée, pour ne faire revoir au Responsable
+    Réseau que ce qui a changé depuis. Jamais purgé -- même principe que
+    FlowValidationHistory/AclProposalHistory, chaque cycle clôturé reste en base
+    indéfiniment pour l'audit.
+
+    Révisé le 2026-08-21 (retour de l'encadrant après démo) : un cycle était initialement
+    global (toutes sources confondues, `source` nullable, cf. git blame) -- corrigé en
+    scope obligatoire par source, cohérent avec le workflow réel ("j'importe UN log" = une
+    source précise, pas le parc entier). Voir docs/13-cycle-de-validation.md.
+    """
+
+    __tablename__ = "validation_cycles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(index=True)
+    closed_by: Mapped[Optional[str]]
+    closed_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
+    flow_count: Mapped[int] = mapped_column(default=0)
+    note: Mapped[Optional[str]]
+
+    entries: Mapped[list["FlowSnapshot"]] = relationship(back_populates="cycle", passive_deletes=True)
+
+
+class FlowSnapshot(Base):
+    """État figé d'un Flow au moment de la clôture d'un ValidationCycle -- sert à la fois de
+    référence pour détecter les écarts (nouveau/disparu/modifié) au cycle suivant, ET de
+    source pour reconstruire la "Matrice Validée" comme une vraie matrice consultable à part
+    entière (pas seulement un diff -- demande explicite de Loulou, 2026-08-21, après
+    confusion sur "où est la Matrice Validée ?"). Ne duplique jamais les champs d'identité
+    d'un Flow (source/src_ip/dst_ip/dst_port/protocol) : la contrainte d'unicité
+    `uq_flow_identity` garantit qu'ils ne changent jamais pour un flow_id donné une fois créé
+    -- seuls les champs qui PEUVENT évoluer entre deux imports/qualifications sont figés ici.
+    Voir Services/validation_cycle_engine.py pour la logique de comparaison et de
+    reconstruction de matrice.
+    """
+
+    __tablename__ = "flow_snapshots"
+    __table_args__ = (
+        UniqueConstraint("cycle_id", "flow_id", name="uq_flow_snapshot_cycle_flow"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    cycle_id: Mapped[int] = mapped_column(ForeignKey("validation_cycles.id", ondelete="CASCADE"), index=True)
+    cycle: Mapped["ValidationCycle"] = relationship(back_populates="entries")
+
+    # SET NULL (pas CASCADE comme FlowValidationHistory) : un cycle clôturé reste un
+    # document d'audit à part entière, même dans l'hypothèse -- aujourd'hui impossible,
+    # cf. règle "Flow jamais supprimé" -- où un Flow viendrait à disparaître techniquement.
+    flow_id: Mapped[Optional[int]] = mapped_column(ForeignKey("flows.id", ondelete="SET NULL"), index=True)
+
+    # État figé au moment T -- suffisant pour calculer un diff sans retourner aux LogEntry
+    # ni recalculer quoi que ce soit (cohérent avec le principe "jamais un score/statut
+    # recalculé implicitement à partir d'autre chose que sa propre trace").
+    occurrence_count: Mapped[int]
+    allow_count: Mapped[int]
+    block_count: Mapped[int]
+    dominant_action: Mapped[Optional[str]]
+    last_seen_at: Mapped[Optional[datetime]]
+    ingress_zone: Mapped[Optional[str]]
+    egress_zone: Mapped[Optional[str]]
+    last_access_control_rule_name: Mapped[Optional[str]]
+    criticality_label: Mapped[Optional[str]]
+    validation_status: Mapped[str]
+    # Ajoutés le 2026-08-21 pour que la Matrice Validée supporte les mêmes modes de
+    # coloration que la Matrice Réelle (volume de données, débit) -- pas nécessaires au
+    # diff (jamais dans STRUCTURAL_FIELDS), uniquement pour reconstruire une matrice fidèle.
+    total_initiator_bytes: Mapped[int] = mapped_column(default=0)
+    total_responder_bytes: Mapped[int] = mapped_column(default=0)
+    total_connection_duration: Mapped[int] = mapped_column(default=0)
+    application_protocol: Mapped[Optional[str]]
+    # Ajouté le 2026-09-03 : décision cible explicite (Flow.decided_action) figée à la
+    # clôture -- permet au diff du cycle SUIVANT de distinguer "personne n'a rien décidé,
+    # le trafic a juste changé" (modifie) de "une décision existait et le pare-feu ne s'y
+    # conforme toujours pas" (regle_non_appliquee), cf. Services/validation_cycle_engine.py.
+    decided_action: Mapped[Optional[str]]
+
+    # Ajoutés le 2026-09-06 : tally Flow.cycle_* du cycle qui vient de se clôturer (avant sa
+    # remise à zéro sur Flow) -- remplace dominant_action (lifetime, contaminable pour
+    # toujours par une seule occurrence contradictoire ancienne) dans la comparaison du
+    # diff. cycle_allow_count/cycle_block_count permettent aussi d'afficher une répartition
+    # chiffrée ("18 Allow / 2 Block") côté "avant" quand cycle_dominant_action valait "Mixed",
+    # jamais le mot brut. Voir Services/validation_cycle_engine.py.
+    cycle_occurrence_count: Mapped[int] = mapped_column(default=0)
+    cycle_allow_count: Mapped[int] = mapped_column(default=0)
+    cycle_block_count: Mapped[int] = mapped_column(default=0)
+    cycle_dominant_action: Mapped[Optional[str]]
+    cycle_total_initiator_bytes: Mapped[int] = mapped_column(default=0)
+    cycle_total_responder_bytes: Mapped[int] = mapped_column(default=0)
+    cycle_total_connection_duration: Mapped[int] = mapped_column(default=0)
+
 
 class RuleRecommendation(Base):
     """Finding produit par le Recommendation Engine sur une règle ACL déjà appliquée par
@@ -324,3 +462,99 @@ class RuleRecommendation(Base):
 
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
+
+
+class RuleEnforcementClaim(Base):
+    """Suivi léger d'une "réclamation" sur un flux "Règle non appliquée" (2026-09-10, demande
+    de l'encadrant) -- une décision explicite (`Flow.decided_action`) existe mais l'action
+    réellement observée ne s'y conforme toujours pas. Une ligne par Flow (jamais plusieurs
+    décisions actives en même temps sur un Flow, cf. `Flow.decided_action`) :
+
+    - `first_detected_at` posé AUTOMATIQUEMENT par le calcul du diff
+      (`Services/validation_cycle_engine.py::compute_diff`), la toute première fois que ce
+      Flow est vu "regle_non_appliquee" -- indépendamment de toute action humaine (décision de
+      conception actée le 2026-09-10 : sinon "première détection" et "première réclamation"
+      seraient toujours la même date, perdant tout leur sens l'une par rapport à l'autre).
+    - `last_claimed_at`/`claim_count` uniquement mis à jour par un clic explicite "Déclarer la
+      réclamation" (app/rule_enforcement_claims.py), jamais automatiquement.
+
+    Supprimée (jamais laissée obsolète) dès qu'une NOUVELLE décision remplace l'ancienne via
+    "Changer la règle" -- portait sur une cible qui n'existe plus, cf.
+    flow_validation.py::apply_rule_change.
+    """
+
+    __tablename__ = "rule_enforcement_claims"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # CASCADE (pas SET NULL) : cette table est un suivi *du* Flow, elle n'a pas de sens sans
+    # lui -- même raisonnement que FlowValidationHistory. unique=True : une seule réclamation
+    # active par Flow, jamais deux lignes concurrentes pour la même décision.
+    flow_id: Mapped[int] = mapped_column(ForeignKey("flows.id", ondelete="CASCADE"), unique=True, index=True)
+    flow: Mapped["Flow"] = relationship()
+
+    first_detected_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    last_claimed_at: Mapped[Optional[datetime]]
+    claim_count: Mapped[int] = mapped_column(default=0)
+
+
+class NetworkPolicy(Base):
+    """Politique de sous-réseau (2026-09-10, demande de l'encadrant) -- fonctionnalité NOUVELLE
+    et VOLONTAIREMENT ISOLÉE : aucun lien avec Flow.decided_action, le diff de cycle
+    (Services/validation_cycle_engine.py), ou FlowSnapshot. Un simple enregistrement à la main
+    d'une décision sur un REGROUPEMENT d'IP (jamais un Flow individuel) -- le CIDR source est du
+    texte libre, jamais validé ni contraint : peut venir d'une suggestion de regroupement
+    (Services/subnet_observation.py, elle-même purement indicative -- le système ne peut pas
+    connaître le vrai découpage réseau de Nouvelair à partir des seules IP des logs) ou être
+    saisi librement. `destination` est également du texte libre (zone, IP, ou CIDR). AUCUNE
+    logique de correspondance ni d'application automatique aux Flow pour l'instant -- juste une
+    fiche enregistrée, comme le sont déjà les fiches de changement de règle et de non-
+    application (app/fiche_pdf.py), mais sans aucun rattachement à un flow_id précis.
+    """
+
+    __tablename__ = "network_policies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # Contexte (quelle source/firewall a inspiré cette politique) -- jamais une contrainte,
+    # une politique peut très bien ne pas être rattachée à une source précise.
+    source: Mapped[Optional[str]] = mapped_column(index=True)
+    src_cidr: Mapped[str]
+    destination: Mapped[str]
+    protocol: Mapped[Optional[str]]
+    dst_port: Mapped[Optional[int]]
+    action: Mapped[str]  # "Allow" | "Block"
+    justification: Mapped[str]
+    decided_by: Mapped[Optional[str]]
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class ImportLog(Base):
+    """Historique des imports de logs (2026-09-11, demande de l'encadrant) -- table d'AUDIT EN
+    AJOUT SEUL, jamais modifiée après coup, même principe que FlowValidationHistory. PAS de FK
+    (contrairement à FlowValidationHistory, qui trace un Flow précis) : un import n'a pas
+    d'entité parente unique à référencer, c'est son propre enregistrement autonome. Écrite
+    automatiquement par app/import_log.py::record_import() à la fin de chaque import réussi
+    (appelée depuis main.py::import_logs(), PAS depuis app/ingestion.py -- ce module reste
+    intégralement inchangé, ce n'est qu'un enregistrement du résultat déjà calculé par
+    ingestion.import_log_file(), aucune nouvelle logique d'import). Consultable même après avoir
+    quitté puis rechargé la page Import (frontend/src/pages/ImportPage.tsx).
+    """
+
+    __tablename__ = "import_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    filename: Mapped[str]
+    # ingestion.import_log_file() retourne `sources: list[str]` (un fichier peut en théorie
+    # contenir plusieurs ACPolicy) -- concaténées ici en une seule chaîne lisible ("SITE-A,
+    # SITE-B" dans ce cas rare) plutôt qu'une deuxième table, un fichier normal ne donnant
+    # qu'une seule source.
+    source: Mapped[str] = mapped_column(index=True)
+    imported_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
+
+    lines_read: Mapped[int]
+    log_entries_created: Mapped[int]
+    log_entries_skipped_duplicate: Mapped[int]
+    parsing_errors: Mapped[int]
+    flows_touched: Mapped[int]

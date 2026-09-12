@@ -85,3 +85,80 @@ export const ACTION_COLORS: Record<string, string> = {
   Block: STATUS_COLORS.critical,
   Mixed: STATUS_COLORS.warning,
 };
+
+// "Mixed" est un terme de debug interne, jamais présentable tel quel (demande de
+// l'encadrant, 2026-09-06) -- même après avoir restreint le calcul au cycle en cours
+// (cf. FlowOut.cycle_dominant_action), un flux peut légitimement avoir plusieurs actions
+// dans la même fenêtre. Remplacé par une répartition chiffrée ("18 Allow / 2 Block"),
+// jamais le mot brut -- partout où une action de flux est affichée (ActionChip, panneaux de
+// détail, fiche de changement de règle).
+export interface ActionDisplay {
+  label: string;
+  color: string;
+}
+
+export function describeAction(action: string | null, allowCount: number, blockCount: number): ActionDisplay {
+  if (action !== "Mixed") {
+    return { label: action ?? "—", color: ACTION_COLORS[action ?? ""] ?? STATUS_COLORS.muted };
+  }
+  return { label: `${allowCount} Allow / ${blockCount} Block`, color: ACTION_COLORS.Mixed };
+}
+
+// Même principe que describeAction ci-dessus, appliqué à un libellé d'axe de matrice (ex.
+// l'en-tête de colonne "Mixed" sur la dimension "Zone × Action") -- pas de répartition
+// chiffrée disponible à cet endroit (juste un nom de colonne), donc un libellé neutre.
+export function displayAxisLabel(label: string): string {
+  return label === "Mixed" ? "Trafic partagé" : label;
+}
+
+// Écart d'un Flow par rapport à la dernière Matrice Validée (Cycle de validation) --
+// conforme = rien à faire (bon), nouveau/modifie = à revoir (attention croissante),
+// regle_non_appliquee = une décision humaine déjà prise, toujours pas honorée par le
+// pare-feu (2026-09-03, priorité maximale : plus urgent qu'un simple "modifie", puisque
+// quelqu'un a déjà décidé et attend), disparu = juste informationnel (plus revu depuis la
+// baseline, pas une alerte en soi).
+export const DIFF_STATUS_COLORS: Record<string, string> = {
+  conforme: STATUS_COLORS.good,
+  nouveau: STATUS_COLORS.warning,
+  modifie: STATUS_COLORS.serious,
+  regle_non_appliquee: STATUS_COLORS.critical,
+  disparu: STATUS_COLORS.muted,
+};
+export const DIFF_STATUS_LABELS: Record<string, string> = {
+  conforme: "Conforme",
+  nouveau: "Nouveau",
+  modifie: "Modifié",
+  regle_non_appliquee: "Règle non appliquée",
+  disparu: "Disparu",
+};
+
+// Libellés lisibles des champs comparés par le Cycle de validation (Services/
+// validation_cycle_engine.py::STRUCTURAL_FIELDS) -- une seule source pour la colonne "Écart"
+// de FlowsTable et le panneau de détail FlowDiffDetailDrawer.
+export const DIFF_FIELD_LABELS: Record<string, string> = {
+  // "cycle_dominant_action" (pas "dominant_action") depuis le 2026-09-06 -- la comparaison
+  // du diff porte sur l'action DE CE CYCLE (voir Services/validation_cycle_engine.py::
+  // STRUCTURAL_FIELDS), jamais le cumul lifetime. Bug réel signalé le 2026-09-06 : ce mapping
+  // n'avait pas suivi le renommage, le panneau affichait le nom de champ brut au lieu d'un
+  // libellé humain.
+  cycle_dominant_action: "Action",
+  ingress_zone: "Zone source",
+  egress_zone: "Zone destination",
+  last_access_control_rule_name: "Règle ACL",
+  criticality_label: "Criticité",
+  decided_action: "Action décidée",
+};
+
+// Ordre de "pire écart présent" dans une cellule de matrice (mode de coloration Écart) --
+// même principe que worstCriticality ci-dessus : regle_non_appliquee/modifie/nouveau sont ce
+// qui demande une action (une décision non honorée passe avant une simple dérive), disparu
+// reste informationnel, conforme est la situation attendue.
+export const DIFF_STATUS_ORDER = ["regle_non_appliquee", "modifie", "nouveau", "disparu", "conforme"];
+
+export function worstDiffStatus(summary: Record<string, number> | undefined): string | null {
+  if (!summary) return null;
+  for (const status of DIFF_STATUS_ORDER) {
+    if (summary[status] > 0) return status;
+  }
+  return null;
+}

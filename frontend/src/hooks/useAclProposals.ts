@@ -19,6 +19,19 @@ export function useRunAclProposals() {
   });
 }
 
+// Chemin normal depuis le Cycle de validation (2026-08-21) : ne considère que les flux
+// approuvés depuis le cycle précédent de cette source, jamais tout l'historique -- voir
+// Services/acl_engine.py::run_for_cycle.
+export function useRunAclProposalsForCycle() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (cycleId: number) => api.runAclProposalsForCycle(cycleId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["acl-proposals"] });
+    },
+  });
+}
+
 export function useReviewAclProposal() {
   const queryClient = useQueryClient();
   return useMutation({

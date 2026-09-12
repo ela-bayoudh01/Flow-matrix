@@ -17,6 +17,24 @@ class ImportSummary(BaseModel):
     new_sources: list[str]
 
 
+class ImportLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    filename: str
+    source: str
+    imported_at: datetime
+    lines_read: int
+    log_entries_created: int
+    log_entries_skipped_duplicate: int
+    parsing_errors: int
+    flows_touched: int
+
+
+class ImportLogsResponse(BaseModel):
+    items: list[ImportLogOut]
+    total_count: int
+
+
 class QualificationRunSummary(BaseModel):
     """Résumé retourné après une exécution du Qualification Engine (POST /api/flows/qualify)."""
 
@@ -40,6 +58,10 @@ class FlowOut(BaseModel):
     protocol: str
     dominant_action: Optional[str]
     occurrence_count: int
+    # Ajoutés le 2026-09-06 -- nécessaires pour ne jamais afficher "Mixed" tel quel côté
+    # frontend (répartition chiffrée "18 Allow / 2 Block" à la place, cf. describeAction).
+    allow_count: int
+    block_count: int
     total_initiator_bytes: int
     total_responder_bytes: int
     first_seen_at: Optional[datetime]
@@ -55,6 +77,17 @@ class FlowOut(BaseModel):
     validation_status: str
     validated_by: Optional[str]
     validated_at: Optional[datetime]
+    decided_action: Optional[str]
+
+    # "Depuis la dernière clôture de cycle" (2026-09-06) -- distinct des champs lifetime
+    # ci-dessus, jamais pollué par une occurrence contradictoire ancienne. Voir Flow.cycle_*.
+    cycle_occurrence_count: int
+    cycle_allow_count: int
+    cycle_block_count: int
+    cycle_dominant_action: Optional[str]
+    cycle_total_initiator_bytes: int
+    cycle_total_responder_bytes: int
+    cycle_total_connection_duration: int
 
 
 class FlowsSummary(BaseModel):
@@ -91,8 +124,38 @@ class MatrixResponse(BaseModel):
 
 
 class ValidationUpdate(BaseModel):
+    """Valider/Bloquer classique -- toujours immédiat, jamais de justification. Voir
+    RuleChangeUpdate pour le bouton dédié "Changer la règle"."""
+
     status: str  # "approved" ou "blocked" -- voir main.py VALID_VALIDATION_STATUSES
     validated_by: Optional[str] = None
+
+
+class RuleChangeUpdate(BaseModel):
+    """Bouton dédié "Changer la règle" (2026-09-05) -- seul chemin qui fige une décision
+    CIBLE explicite sur l'action (Flow.decided_action), toujours avec justification
+    obligatoire (vérifiée côté serveur, jamais fait confiance au client seul) et une fiche
+    PDF générée depuis la ligne d'historique produite. Distinct de ValidationUpdate."""
+
+    target_action: str  # "Allow" ou "Block" -- voir main.py VALID_TARGET_ACTIONS
+    # Optional au niveau du schéma pour que "absent" et "vide" donnent la même erreur 400
+    # explicite côté serveur (main.py), plutôt qu'un 422 générique de validation Pydantic.
+    justification: Optional[str] = None
+    validated_by: Optional[str] = None
+
+
+class RuleEnforcementClaimOut(BaseModel):
+    """Suivi léger d'une réclamation "Règle non appliquée" (2026-09-10) -- voir
+    models.py::RuleEnforcementClaim pour la distinction first_detected_at (posé
+    automatiquement) vs last_claimed_at/claim_count (posés par "Déclarer la réclamation")."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    flow_id: int
+    first_detected_at: datetime
+    last_claimed_at: Optional[datetime]
+    claim_count: int
 
 
 class ValidationHistoryOut(BaseModel):
@@ -109,6 +172,40 @@ class ValidationHistoryOut(BaseModel):
     new_status: str
     validated_by: Optional[str]
     created_at: datetime
+    # Renseignés uniquement pour une entrée issue d'une inversion d'action (2026-09-03) --
+    # None sur une entrée "classique" (Valider/Bloquer qui confirme l'observé).
+    justification: Optional[str]
+    observed_action_before: Optional[str]
+    decided_action: Optional[str]
+
+
+class LogEntryOut(BaseModel):
+    """Une connexion individuelle sous-jacente à un Flow -- drill-down (2026-09-06, demande
+    de l'encadrant) : occurrence_count agrège potentiellement des milliers de LogEntry,
+    jamais consultables un par un jusqu'ici. Sous-ensemble des colonnes structurées de
+    LogEntry pertinentes pour une lecture humaine ligne par ligne -- `raw_line`/`extra`
+    (SSL*, DNS*, NAT_*...) restent en base, jamais supprimés, mais pas dans ce résumé (cf.
+    docs/02, "rien n'est supprimé" -- juste pas tout ressaisi ici en V1)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    first_packet_at: Optional[datetime]
+    access_control_rule_action: Optional[str]
+    access_control_rule_name: Optional[str]
+    src_port: Optional[int]
+    initiator_bytes: Optional[int]
+    responder_bytes: Optional[int]
+    connection_duration: Optional[int]
+    application_protocol: Optional[str]
+    web_application: Optional[str]
+    ingress_zone: Optional[str]
+    egress_zone: Optional[str]
+
+
+class LogEntriesResponse(BaseModel):
+    items: list[LogEntryOut]
+    total_count: int
 
 
 class ValidationHistoryResponse(BaseModel):
@@ -155,6 +252,16 @@ class RecommendationReview(BaseModel):
     reviewed_by: Optional[str] = None
 
 
+class AclCreateDetail(BaseModel):
+    """Pourquoi "create" vaut ce qu'il vaut -- pour que 0 ne ressemble jamais à un échec
+    silencieux (cas réel, 2026-08-22 : 4 flux approuvés, 0 proposition, tous déjà couverts
+    par une règle nommée -- correct, mais invisible sans creuser la base à la main)."""
+
+    considered: int  # flux approuvés dans le périmètre (source + fenêtre de temps)
+    eligible: int  # parmi eux, ceux réellement sous Default Action (alimentent "create")
+    already_covered: int  # déjà régis par une règle explicite -- rien à créer pour eux
+
+
 class AclProposalRunSummary(BaseModel):
     """Résumé retourné après une exécution de l'ACL Engine (POST /api/acl-proposals/run)."""
 
@@ -162,6 +269,7 @@ class AclProposalRunSummary(BaseModel):
     created: int
     updated: int
     by_intent: dict[str, int]
+    create_detail: AclCreateDetail
 
 
 class AclProposalOut(BaseModel):
@@ -232,4 +340,140 @@ class AclProposalHistoryOut(BaseModel):
 
 class AclProposalHistoryResponse(BaseModel):
     items: list[AclProposalHistoryOut]
+    total_count: int
+
+
+class ValidationCycleOut(BaseModel):
+    """Une clôture de cycle de validation ("Matrice Validée" figée à un instant t, pour une
+    source précise -- un cycle ne mélange jamais deux sources)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source: str
+    closed_by: Optional[str]
+    closed_at: datetime
+    flow_count: int
+    note: Optional[str]
+
+
+class ValidationCyclesResponse(BaseModel):
+    items: list[ValidationCycleOut]
+    total_count: int
+
+
+class FlowDiffOut(BaseModel):
+    """Un Flow avec son écart calculé par rapport à la dernière Matrice Validée."""
+
+    flow: FlowOut
+    diff_status: str  # "nouveau" | "disparu" | "modifie" | "conforme"
+    diff_details: Optional[dict[str, dict]] = None  # {champ: {"avant": ..., "apres": ...}} -- "modifie" seulement
+
+
+class FlowDiffSummary(BaseModel):
+    nouveau: int
+    disparu: int  # informationnel uniquement -- jamais compté dans pending_review_count
+    # Décision explicite (Flow.decided_action) toujours pas honorée par le pare-feu observé
+    # (2026-09-03) -- distinct de "modifie" (dérive organique, personne n'a rien décidé),
+    # compte dans pending_review_count comme "nouveau"/"modifie".
+    regle_non_appliquee: int
+    modifie: int
+    conforme: int
+    pending_review_count: int  # écarts À TRAITER (nouveau/modifie/regle_non_appliquee) encore "pending"
+
+
+class FlowDiffResponse(BaseModel):
+    items: list[FlowDiffOut]
+    total_count: int
+    summary: FlowDiffSummary
+    # Dernier cycle de chaque source présente dans `items` -- {} si aucune des sources
+    # concernées n'a de baseline. Jamais un seul "cycle" global : un cycle est toujours
+    # propre à une source (cf. ValidationCycle, révisé le 2026-08-21).
+    cycles: dict[str, ValidationCycleOut]
+
+
+class CellDiffOut(BaseModel):
+    row: str
+    col: str
+    diff_summary: dict[str, int]
+
+
+class CellDiffResponse(BaseModel):
+    cycles: dict[str, ValidationCycleOut]
+    cells: list[CellDiffOut]
+
+
+# --- Rollup du diff par sous-réseau CIDR (2026-09-11) -- fusion de "Politiques de sous-réseau"
+# dans le Cycle de validation, voir Services/validation_cycle_engine.py::compute_subnet_diff.
+
+class SubnetDiffOut(BaseModel):
+    cidr: str
+    machine_count: int
+    flow_count: int
+    diff_summary: dict[str, int]
+
+
+class SubnetDiffResponse(BaseModel):
+    source: str
+    prefix_length: int
+    cycle: Optional[ValidationCycleOut]
+    items: list[SubnetDiffOut]
+
+
+class ValidatedMatrixResponse(BaseModel):
+    """Matrice Validée -- reconstruite depuis les FlowSnapshot du dernier cycle clôturé
+    d'une source, pas depuis les Flow en direct. Mêmes MatrixCell que GET /api/matrix, pour
+    être affichée par le même composant frontend. `cycle=None` si aucun cycle n'a encore été
+    clôturé pour cette source (matrice vide, pas une erreur)."""
+
+    dimension: str
+    cycle: Optional[ValidationCycleOut]
+    cells: list[MatrixCell]
+
+
+# --- Politiques de sous-réseau (2026-09-10) -- fonctionnalité isolée, voir models.py::NetworkPolicy
+
+
+class SubnetObservationOut(BaseModel):
+    """Un regroupement CIDR suggéré -- purement indicatif, cf. Services/subnet_observation.py."""
+
+    cidr: str
+    machine_count: int
+    flow_count: int
+
+
+class SubnetObservationsResponse(BaseModel):
+    source: str
+    prefix_length: int
+    items: list[SubnetObservationOut]
+
+
+class NetworkPolicyCreate(BaseModel):
+    source: Optional[str] = None
+    src_cidr: str
+    destination: str
+    protocol: Optional[str] = None
+    dst_port: Optional[int] = None
+    action: str  # "Allow" ou "Block" -- voir main.py VALID_TARGET_ACTIONS (réutilisé)
+    justification: str
+    decided_by: Optional[str] = None
+
+
+class NetworkPolicyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source: Optional[str]
+    src_cidr: str
+    destination: str
+    protocol: Optional[str]
+    dst_port: Optional[int]
+    action: str
+    justification: str
+    decided_by: Optional[str]
+    created_at: datetime
+
+
+class NetworkPoliciesResponse(BaseModel):
+    items: list[NetworkPolicyOut]
     total_count: int

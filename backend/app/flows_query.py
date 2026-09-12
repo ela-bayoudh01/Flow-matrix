@@ -8,8 +8,9 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Query, Session
 
-from .flow_filters import FILTER_COLUMNS, apply_filters
+from .flow_filters import FILTER_COLUMNS, FLOW_SEARCH_COLUMNS, apply_filters
 from .models import Flow
+from .search_utils import apply_keyword_search
 from .Services import matrix_engine
 
 MAX_LIMIT = 1000
@@ -24,19 +25,23 @@ def list_flows(
     dimension: Optional[str] = None,
     row_value: Optional[str] = None,
     col_value: Optional[str] = None,
+    q: Optional[str] = None,
     **filters,
 ) -> dict:
     unknown = set(filters) - set(FILTER_COLUMNS)
     if unknown:
         raise ValueError(f"Filtre(s) inconnu(s) : {sorted(unknown)}")
 
-    base_query = _apply_cell_filter(apply_filters(session.query(Flow), filters), dimension, row_value, col_value)
+    base_query = apply_keyword_search(
+        _apply_cell_filter(apply_filters(session.query(Flow), filters), dimension, row_value, col_value),
+        q, FLOW_SEARCH_COLUMNS,
+    )
 
     total_count = base_query.count()
     limit = max(1, min(limit, MAX_LIMIT))
     items = base_query.order_by(Flow.id).offset(offset).limit(limit).all()
 
-    summary = _summarize(session, filters, dimension, row_value, col_value)
+    summary = _summarize(session, filters, dimension, row_value, col_value, q)
     return {"items": items, "total_count": total_count, "summary": summary}
 
 
@@ -59,9 +64,13 @@ def _summarize(
     dimension: Optional[str] = None,
     row_value: Optional[str] = None,
     col_value: Optional[str] = None,
+    q: Optional[str] = None,
 ) -> dict:
-    action_query = _apply_cell_filter(
-        apply_filters(session.query(Flow.dominant_action, func.count(Flow.id)), filters), dimension, row_value, col_value
+    action_query = apply_keyword_search(
+        _apply_cell_filter(
+            apply_filters(session.query(Flow.dominant_action, func.count(Flow.id)), filters), dimension, row_value, col_value
+        ),
+        q, FLOW_SEARCH_COLUMNS,
     ).group_by(Flow.dominant_action)
     action_counts: dict[Optional[str], int] = dict(action_query.all())
     # un Flow "Mixed" compte à la fois dans allow et block : c'est bien un flux qui a été
@@ -69,8 +78,11 @@ def _summarize(
     allow_count = action_counts.get("Allow", 0) + action_counts.get("Mixed", 0)
     block_count = action_counts.get("Block", 0) + action_counts.get("Mixed", 0)
 
-    criticality_query = _apply_cell_filter(
-        apply_filters(session.query(Flow.criticality_label, func.count(Flow.id)), filters), dimension, row_value, col_value
+    criticality_query = apply_keyword_search(
+        _apply_cell_filter(
+            apply_filters(session.query(Flow.criticality_label, func.count(Flow.id)), filters), dimension, row_value, col_value
+        ),
+        q, FLOW_SEARCH_COLUMNS,
     ).group_by(Flow.criticality_label)
     criticality_breakdown = {(label or "non_qualifie"): count for label, count in criticality_query.all()}
 

@@ -1,13 +1,22 @@
 import { AgGridReact } from "ag-grid-react";
 import { AllCommunityModule, ModuleRegistry, type ColDef, type CellClickedEvent } from "ag-grid-community";
 import { useMemo } from "react";
-import type { MatrixCell } from "../../api/types";
-import { worstCriticality, criticalityColor as statusCriticalityColor, STATUS_COLORS } from "../../theme/colors";
+import { ecartsATraiter, type CellDiffOut, type DiffStatus, type MatrixCell } from "../../api/types";
+import {
+  worstCriticality,
+  criticalityColor as statusCriticalityColor,
+  worstDiffStatus,
+  displayAxisLabel,
+  DIFF_STATUS_COLORS,
+  DIFF_STATUS_LABELS,
+  DIFF_STATUS_ORDER,
+  STATUS_COLORS,
+} from "../../theme/colors";
 import { appGridTheme } from "../../theme/agGridTheme";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-export type ColorMode = "volume" | "debit" | "criticality";
+export type ColorMode = "volume" | "debit" | "criticality" | "diff";
 
 export const NON_QUALIFIE_COLOR = STATUS_COLORS.muted;
 export const EMPTY_CELL_COLOR = "#f5f5f5"; // aucun flow entre cette paire
@@ -65,6 +74,12 @@ function cellCriticalityColor(cell: MatrixCell | undefined): string {
   return statusCriticalityColor(worst);
 }
 
+function cellDiffColor(diff: CellDiffOut | undefined): string {
+  if (!diff) return EMPTY_CELL_COLOR;
+  const worst = worstDiffStatus(diff.diff_summary);
+  return worst ? DIFF_STATUS_COLORS[worst] : EMPTY_CELL_COLOR;
+}
+
 function dataVolumeColor(cell: MatrixCell | undefined, maxBytes: number): string {
   if (!cell || cell.flow_count === 0) return EMPTY_CELL_COLOR;
   const ratio = maxBytes > 0 ? Math.log(cell.total_bytes + 1) / Math.log(maxBytes + 1) : 0;
@@ -75,12 +90,20 @@ function dataVolumeColor(cell: MatrixCell | undefined, maxBytes: number): string
 interface MatrixGridProps {
   cells: MatrixCell[];
   colorMode: ColorMode;
-  onCellClick: (row: string, col: string) => void;
+  // Optionnel : la Matrice Validée (données figées) n'a pas de drill-down vers les Flow en
+  // direct -- afficherait des flux vivants pour une cellule qui représente un état passé,
+  // trompeur. Sans onCellClick, les cellules restent consultables (tooltip) mais pas cliquables.
+  onCellClick?: (row: string, col: string) => void;
   rowAxisLabel: string;
   colAxisLabel: string;
+  // Rollup du Cycle de validation (GET /api/validation-cycles/cell-diff), même dimension/
+  // filtres que `cells` -- fusionné ici par (row, col), jamais recalculé : uniquement utilisé
+  // quand colorMode === "diff". undefined tant que le mode n'est pas actif (la requête n'est
+  // déclenchée qu'à ce moment-là côté MatrixPage).
+  diffCells?: CellDiffOut[];
 }
 
-export function MatrixGrid({ cells, colorMode, onCellClick, rowAxisLabel, colAxisLabel }: MatrixGridProps) {
+export function MatrixGrid({ cells, colorMode, onCellClick, rowAxisLabel, colAxisLabel, diffCells }: MatrixGridProps) {
   const { rows, cols, cellMap, maxFlowCount, maxBytes } = useMemo(() => {
     const rowSet = new Set<string>();
     const colSet = new Set<string>();
@@ -110,6 +133,14 @@ export function MatrixGrid({ cells, colorMode, onCellClick, rowAxisLabel, colAxi
     };
   }, [cells]);
 
+  const diffCellMap = useMemo(() => {
+    const map = new Map<string, CellDiffOut>();
+    for (const diff of diffCells ?? []) {
+      map.set(`${diff.row}::${diff.col}`, diff);
+    }
+    return map;
+  }, [diffCells]);
+
   const rowData = useMemo(
     () =>
       rows.map((row) => ({
@@ -133,7 +164,10 @@ export function MatrixGrid({ cells, colorMode, onCellClick, rowAxisLabel, colAxi
     };
     const zoneColumns: ColDef[] = cols.map((col) => ({
       field: col,
-      headerName: col,
+      // displayAxisLabel : "Mixed" (dimension "Zone × Action") n'est jamais présentable tel
+      // quel (2026-09-06) -- relabellisation d'affichage uniquement, la valeur groupée reste
+      // "Mixed" (col/cellMap), jamais touchée.
+      headerName: displayAxisLabel(col),
       // Ni une largeur fixe (autoSizeStrategy s'en charge, cf. <AgGridReact>) ni un texte
       // d'en-tête tronqué : deux valeurs distinctes avec un long préfixe commun (ex. deux
       // règles ACL "ACL_ANY_IN...") doivent rester visuellement distinguables sans survol
@@ -141,12 +175,21 @@ export function MatrixGrid({ cells, colorMode, onCellClick, rowAxisLabel, colAxi
       minWidth: 90,
       wrapHeaderText: true,
       autoHeaderHeight: true,
-      headerTooltip: col, // filet de sécurité si le texte enroulé reste ambigu malgré tout
+      headerTooltip: displayAxisLabel(col), // filet de sécurité si le texte enroulé reste ambigu malgré tout
       sortable: false,
       filter: false,
       valueFormatter: (p) => {
         const cell = p.value as MatrixCell | undefined;
         if (!cell || cell.flow_count === 0) return "";
+        if (colorMode === "diff") {
+          const diff = diffCellMap.get(`${p.data.__row}::${col}`);
+          // 2026-09-12, bug réel corrigé : ce calcul redéfinissait "écart à traiter" en dur
+          // (nouveau + modifie + disparu, donc disparu compté à tort et regle_non_appliquee
+          // jamais compté) -- réutilise désormais ecartsATraiter(), seule définition, déjà
+          // partagée avec ValidationCyclePage.tsx.
+          const ecarts = diff ? ecartsATraiter(diff.diff_summary) : 0;
+          return ecarts > 0 ? `${ecarts} écart(s)` : "conforme";
+        }
         return colorMode === "debit" ? formatByteVolume(cell.total_bytes) : String(cell.flow_count);
       },
       tooltipValueGetter: (p) => {
@@ -163,6 +206,17 @@ export function MatrixGrid({ cells, colorMode, onCellClick, rowAxisLabel, colAxi
           const rateText = bitrate === null ? "débit non calculable (durée cumulée nulle)" : `débit moyen ${formatBitrate(bitrate)}`;
           return `${formatByteVolume(cell.total_bytes)} sur ${cell.flow_count} flux -- ${rateText}`;
         }
+        if (colorMode === "diff") {
+          const diff = diffCellMap.get(`${p.data.__row}::${col}`);
+          if (!diff) return "Aucune baseline pour l'instant -- tout est \"nouveau\"";
+          // DIFF_STATUS_ORDER (même ordre que la couleur de cellule, worstDiffStatus
+          // ci-dessus) -- 2026-09-12, bug réel corrigé : cette liste omettait
+          // "regle_non_appliquee" (jamais visible dans l'infobulle), pas seulement le
+          // total "écart(s)" ci-dessus.
+          return DIFF_STATUS_ORDER.map(
+            (status) => `${DIFF_STATUS_LABELS[status]} : ${diff.diff_summary[status as DiffStatus]}`,
+          ).join(" -- ");
+        }
         return `${cell.flow_count} flux au total`;
       },
       cellStyle: (p) => {
@@ -170,14 +224,16 @@ export function MatrixGrid({ cells, colorMode, onCellClick, rowAxisLabel, colAxi
         let backgroundColor: string;
         if (colorMode === "volume") backgroundColor = volumeColor(cell?.flow_count ?? 0, maxFlowCount);
         else if (colorMode === "debit") backgroundColor = dataVolumeColor(cell, maxBytes);
+        else if (colorMode === "diff") backgroundColor = cell?.flow_count ? cellDiffColor(diffCellMap.get(`${p.data.__row}::${col}`)) : EMPTY_CELL_COLOR;
         else backgroundColor = cellCriticalityColor(cell);
-        return { backgroundColor, textAlign: "center", cursor: cell?.flow_count ? "pointer" : "default" };
+        return { backgroundColor, textAlign: "center", cursor: cell?.flow_count && onCellClick ? "pointer" : "default" };
       },
     }));
     return [rowHeaderCol, ...zoneColumns];
-  }, [cols, colorMode, maxFlowCount, maxBytes, rowAxisLabel, colAxisLabel]);
+  }, [cols, colorMode, maxFlowCount, maxBytes, rowAxisLabel, colAxisLabel, diffCellMap, onCellClick]);
 
   const handleCellClicked = (event: CellClickedEvent) => {
+    if (!onCellClick) return;
     if (event.colDef.field === "__row") return;
     const cell = event.value as MatrixCell | undefined;
     if (!cell || cell.flow_count === 0) return;

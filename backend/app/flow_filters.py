@@ -25,6 +25,26 @@ FILTER_COLUMNS = {
     "web_application": Flow.web_application,
 }
 
+# Colonnes cherchées par la barre de recherche par mot-clé (demande de l'encadrant,
+# 2026-08-25) -- réutilisées telles quelles par flows_query.py (Table des flux) et
+# Services/validation_cycle_engine.py (Cycle de validation), jamais une deuxième liste.
+# Volontairement PAS ajoutées à flow_filter_params : /api/matrix (agrégation) n'est pas une
+# des listes de lignes visées par la demande, seules les vues "table" le sont.
+FLOW_SEARCH_COLUMNS = [
+    Flow.source,
+    Flow.src_ip,
+    Flow.dst_ip,
+    Flow.dst_port,
+    Flow.protocol,
+    Flow.dominant_action,
+    Flow.ingress_zone,
+    Flow.egress_zone,
+    Flow.last_access_control_rule_name,
+    Flow.application_protocol,
+    Flow.web_application,
+    Flow.criticality_label,
+]
+
 
 def apply_filters(query: Query, filters: dict) -> Query:
     for key, column in FILTER_COLUMNS.items():

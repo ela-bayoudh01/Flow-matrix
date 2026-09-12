@@ -58,6 +58,47 @@ def test_create_proposal_for_an_approved_flow_under_default_action(session):
     assert "Loulou" in proposal.proposed_rule_text
 
 
+def test_create_rescan_without_since_drops_a_flow_that_no_longer_matches(session):
+    # Rescan complet (since=None, comportement du bouton manuel POST /api/acl-proposals/run
+    # sans cycle) : la liste de flux d'une proposition doit rester EXACTE à chaque appel,
+    # y compris retirer un flux qui ne correspond plus (ex. re-bloqué depuis), tant qu'au
+    # moins un autre flux du même groupe correspond encore (sinon le groupe entier disparaît
+    # des findings et la proposition existante n'est pas revisitée -- comportement déjà
+    # présent avant l'introduction du scoping par cycle, pas changé ici). Vérifie que le
+    # merge introduit pour le scoping par cycle (since is not None) ne s'applique jamais au
+    # rescan complet, cf. _upsert_proposals(merge=...).
+    stays_approved = make_flow(session, src_ip="10.10.1.1")
+    gets_blocked = make_flow(session, src_ip="10.10.1.2")
+    session.commit()
+    acl_engine.run(session)
+    assert set(session.query(AclProposal).one().rationale["flow_ids"]) == {stays_approved.id, gets_blocked.id}
+
+    gets_blocked.validation_status = "blocked"  # ne correspond plus au critère "approved"
+    session.commit()
+
+    acl_engine.run(session)
+
+    assert session.query(AclProposal).one().rationale["flow_ids"] == [stays_approved.id]
+
+
+def test_create_with_since_merges_instead_of_replacing(session):
+    # run_for_cycle() (since is not None) ne voit qu'une tranche partielle des flux
+    # approuvés -- un appel ultérieur ne doit jamais faire disparaître un flux déjà rattaché
+    # par un appel précédent, contrairement au rescan complet ci-dessus.
+    from datetime import datetime, timedelta
+
+    older = make_flow(session, src_ip="10.10.1.1", validated_at=datetime(2026, 8, 1))
+    session.commit()
+    acl_engine.run(session, since=None)  # 1er cycle, pas d'historique précédent
+
+    newer = make_flow(session, src_ip="10.10.1.2", validated_at=datetime(2026, 8, 15))
+    session.commit()
+    acl_engine.run(session, since=datetime(2026, 8, 1) + timedelta(seconds=1))
+
+    proposal = session.query(AclProposal).one()  # même groupe zone/protocole/port -> une seule proposition
+    assert set(proposal.rationale["flow_ids"]) == {older.id, newer.id}
+
+
 def test_create_groups_several_flows_sharing_the_same_shape(session):
     make_flow(session, src_ip="10.10.1.1", dst_ip="10.20.1.1")
     make_flow(session, src_ip="10.10.1.2", dst_ip="10.20.1.1")
@@ -86,6 +127,30 @@ def test_create_ignores_flows_already_covered_by_a_named_rule(session):
     summary = acl_engine.run(session)
 
     assert summary["total_proposals"] == 0
+
+
+def test_create_detail_explains_why_zero_is_not_a_silent_failure(session):
+    # Cas réel rencontré (2026-08-22) : 4 flux approuvés, 0 proposition, aucun moyen de
+    # savoir sans creuser la base à la main que les 4 étaient déjà couverts par une règle
+    # nommée -- create_detail rend ça explicite dans la réponse elle-même.
+    make_flow(session, src_ip="10.10.1.1", last_access_control_rule_name="ACL_ANY_INTERNET_HTTPS_OUT")
+    make_flow(session, src_ip="10.10.1.2", last_access_control_rule_name="ACL_ANY_INTERNET_HTTPS_OUT")
+    session.commit()
+
+    summary = acl_engine.run(session)
+
+    assert summary["total_proposals"] == 0
+    assert summary["create_detail"] == {"considered": 2, "eligible": 0, "already_covered": 2}
+
+
+def test_create_detail_counts_eligible_flows_separately(session):
+    make_flow(session, src_ip="10.10.1.1")  # Default Action -- éligible
+    make_flow(session, src_ip="10.10.1.2", last_access_control_rule_name="ACL_ANY_INTERNET_HTTPS_OUT")  # déjà couvert
+    session.commit()
+
+    summary = acl_engine.run(session)
+
+    assert summary["create_detail"] == {"considered": 2, "eligible": 1, "already_covered": 1}
 
 
 def test_create_links_to_a_matching_sans_regle_explicite_recommendation(session):
@@ -151,6 +216,22 @@ def test_tighten_proposal_for_an_acknowledged_trop_permissive_recommendation(ses
     assert "distinct_dst_port_over_threshold" in proposal.proposed_rule_text
 
 
+def test_tighten_since_ignores_recommendations_acknowledged_before_the_window(session):
+    from datetime import datetime
+
+    session.add(
+        RuleRecommendation(
+            source="SITE-A-FWTEST", finding_type="trop_permissive", rule_name="ACL_OLD",
+            status="acknowledged", reviewed_at=datetime(2026, 8, 1),
+        )
+    )
+    session.commit()
+
+    summary = acl_engine.run(session, since=datetime(2026, 8, 10))
+
+    assert summary["by_intent"]["tighten"] == 0
+
+
 def test_tighten_ignores_pending_recommendations(session):
     session.add(
         RuleRecommendation(source="SITE-A-FWTEST", finding_type="trop_permissive", rule_name="ACL_X", status="pending")
@@ -177,6 +258,41 @@ def test_revoke_proposal_for_an_acknowledged_obsolete_recommendation(session):
     assert proposal.intent == "revoke"
     assert proposal.target_rule_name == "ACL_OLD_RULE"
     assert proposal.proposed_action == "Remove"
+
+
+# --- run_for_cycle() : déclenchement scopé à un ValidationCycle ------------------------
+
+
+def test_run_for_cycle_first_cycle_behaves_like_a_full_scan(session):
+    from app.Services import validation_cycle_engine as vce
+
+    make_flow(session)
+    session.commit()
+    cycle = vce.close_cycle(session, source="SITE-A-FWTEST")
+
+    summary = acl_engine.run_for_cycle(session, cycle)
+
+    assert summary["by_intent"]["create"] == 1
+
+
+def test_run_for_cycle_second_cycle_only_considers_flows_approved_since_the_first(session):
+    from datetime import datetime, timedelta
+
+    from app.Services import validation_cycle_engine as vce
+
+    make_flow(session, src_ip="10.10.1.1", validated_at=datetime(2026, 8, 1))
+    session.commit()
+    cycle_1 = vce.close_cycle(session, source="SITE-A-FWTEST")
+    acl_engine.run_for_cycle(session, cycle_1)
+
+    make_flow(session, src_ip="10.10.1.2", validated_at=cycle_1.closed_at + timedelta(seconds=1))
+    session.commit()
+    cycle_2 = vce.close_cycle(session, source="SITE-A-FWTEST")
+    summary = acl_engine.run_for_cycle(session, cycle_2)
+
+    assert summary["by_intent"]["create"] == 1  # seul le flux approuvé depuis cycle_1
+    proposal = session.query(AclProposal).one()  # même groupe -> une seule proposition
+    assert len(proposal.rationale["flow_ids"]) == 2  # les deux flux couverts, aucun perdu
 
 
 # --- Idempotence -----------------------------------------------------------------------
