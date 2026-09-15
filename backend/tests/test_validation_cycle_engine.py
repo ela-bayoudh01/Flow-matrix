@@ -427,6 +427,46 @@ def test_compute_diff_rejects_an_invalid_src_cidr(session):
         vce.compute_diff(session, {}, src_cidr="not-a-cidr")
 
 
+def test_compute_diff_respects_a_matrix_cell_filter(session):
+    # 2026-09-12, demande de l'encadrant -- colonne "Écart" du tiroir de détail d'une cellule
+    # de la Matrice Réelle en mode "Colorer par écart" : réutilise flows_query.apply_cell_filter
+    # (même mécanisme que le drill-down de /api/flows), jamais une deuxième logique de cellule.
+    session.add_all(
+        [
+            _flow(src_ip="10.10.1.1", dst_ip="203.0.113.1"),  # Users_Zone -> Internet_Zone
+            _flow(src_ip="10.10.1.2", dst_ip="10.20.2.1", ingress_zone="DMZ_Zone", egress_zone="OPS_Zone"),
+        ]
+    )
+    session.commit()
+
+    pairs, _summary, _cycles = vce.compute_diff(session, {}, dimension="zone", row_value="Users_Zone", col_value="Internet_Zone")
+
+    assert len(pairs) == 1
+    assert pairs[0][0].src_ip == "10.10.1.1"
+
+
+def test_compute_diff_cell_filter_also_excludes_flows_inactive_this_cycle(session):
+    # Même exclusion que Services/matrix_engine.py::build_matrix -- le tiroir de détail d'une
+    # cellule ne doit jamais révéler un flux que la cellule elle-même n'affiche pas.
+    session.add_all(
+        [
+            _flow(src_ip="10.10.1.1", dst_ip="203.0.113.1"),  # actif ce cycle
+            _flow(src_ip="10.10.1.2", dst_ip="203.0.113.2", cycle_occurrence_count=0, cycle_dominant_action=None),  # inactif
+        ]
+    )
+    session.commit()
+
+    pairs, _summary, _cycles = vce.compute_diff(session, {}, dimension="zone", row_value="Users_Zone", col_value="Internet_Zone")
+
+    assert len(pairs) == 1
+    assert pairs[0][0].src_ip == "10.10.1.1"
+
+
+def test_compute_diff_rejects_dimension_without_row_and_col_value(session):
+    with pytest.raises(ValueError):
+        vce.compute_diff(session, {}, dimension="zone")
+
+
 # --- compute_cell_diff ---------------------------------------------------------------------
 
 
@@ -978,3 +1018,64 @@ def test_build_cycle_report_empty_when_no_rule_change_happened(session):
     cycle = vce.close_cycle(session, source=SOURCE_A)
 
     assert vce.build_cycle_report(session, cycle) == []
+
+
+# --- build_cycle_network_policies_report -----------------------------------------------------
+
+
+def test_build_cycle_network_policies_report_lists_policies_created_since_the_previous_cycle(session):
+    from datetime import timedelta
+
+    from app.models import NetworkPolicy
+    from app.time_utils import utcnow
+
+    session.add(_flow())
+    session.commit()
+    cycle_1 = vce.close_cycle(session, source=SOURCE_A)
+    before_cycle_1 = cycle_1.closed_at - timedelta(seconds=1)
+
+    # Politique AVANT le cycle 1 -- ne doit pas apparaître dans le rapport du cycle 2.
+    session.add(NetworkPolicy(
+        source=SOURCE_A, src_cidr="10.10.1.0/24", destination="Internet_Zone", action="Allow",
+        justification="Avant cycle 1.", created_at=before_cycle_1,
+    ))
+    session.commit()
+
+    between = utcnow()
+    # Politique APRÈS le cycle 1, AVANT le cycle 2 -- doit apparaître dans le rapport du cycle 2.
+    session.add(NetworkPolicy(
+        source=SOURCE_A, src_cidr="10.10.2.0/24", destination="DMZ_Zone", action="Block",
+        justification="Entre cycle 1 et 2.", created_at=between,
+    ))
+    session.commit()
+    cycle_2 = vce.close_cycle(session, source=SOURCE_A)
+
+    report = vce.build_cycle_network_policies_report(session, cycle_2)
+
+    assert len(report) == 1
+    assert report[0].justification == "Entre cycle 1 et 2."
+
+
+def test_build_cycle_network_policies_report_never_crosses_sources(session):
+    from app.models import NetworkPolicy
+
+    session.add_all([_flow(source=SOURCE_A, src_ip="10.10.1.1"), _flow(source=SOURCE_B, src_ip="10.20.1.1")])
+    session.commit()
+    session.add(NetworkPolicy(
+        source=SOURCE_B, src_cidr="10.20.1.0/24", destination="Internet_Zone", action="Allow",
+        justification="Politique source B.",
+    ))
+    session.commit()
+    cycle_a = vce.close_cycle(session, source=SOURCE_A)
+
+    report = vce.build_cycle_network_policies_report(session, cycle_a)
+
+    assert report == []  # la politique de SOURCE_B ne doit jamais apparaître
+
+
+def test_build_cycle_network_policies_report_empty_when_no_policy_created(session):
+    session.add(_flow())
+    session.commit()
+    cycle = vce.close_cycle(session, source=SOURCE_A)
+
+    assert vce.build_cycle_network_policies_report(session, cycle) == []

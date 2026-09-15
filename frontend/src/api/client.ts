@@ -4,14 +4,18 @@
 import type {
   ImportSummary,
   ImportLogsResponse,
+  ImportLogErrorsResponse,
   FlowFilterValues,
   FlowsFilters,
   FlowsResponse,
   MatrixResponse,
+  SourcesResponse,
+  SourceCoverageResponse,
   FlowOut,
   LogEntriesResponse,
   ValidationUpdate,
   RuleChangeUpdate,
+  ValidationHistoryFilters,
   ValidationHistoryResponse,
   QualificationRunSummary,
   RecommendationFilters,
@@ -116,12 +120,30 @@ export const api = {
     return request(`/api/import-logs${buildQuery(params)}`);
   },
 
+  // Détail des lignes en échec d'un import précis (2026-09-14, demande de l'encadrant) --
+  // derrière un clic sur le nombre d'erreurs de la page Import.
+  getImportLogErrors(importLogId: number): Promise<ImportLogErrorsResponse> {
+    return request(`/api/import-logs/${importLogId}/errors`);
+  },
+
   getFlows(filters: FlowsFilters = {}): Promise<FlowsResponse> {
     return request(`/api/flows${buildQuery(filters)}`);
   },
 
   getMatrix(dimension = "zone", filters: FlowFilterValues = {}): Promise<MatrixResponse> {
     return request(`/api/matrix${buildQuery({ dimension, ...filters })}`);
+  },
+
+  // Toutes les sources connues, indépendamment de l'activité du cycle courant (2026-09-12,
+  // bug réel corrigé -- voir useSourceOptions.ts).
+  getSources(): Promise<SourcesResponse> {
+    return request(`/api/sources`);
+  },
+
+  // Période couverte + dernier import par source (2026-09-12, demande de l'encadrant après
+  // démo) -- Dashboard, Matrice, Table des flux.
+  getSourceCoverage(): Promise<SourceCoverageResponse> {
+    return request(`/api/sources/coverage`);
   },
 
   validateFlow(flowId: number, payload: ValidationUpdate): Promise<FlowOut> {
@@ -138,8 +160,19 @@ export const api = {
     });
   },
 
-  getValidationHistory(params: { flowId?: number; q?: string; limit?: number } = {}): Promise<ValidationHistoryResponse> {
-    return request(`/api/validation-history${buildQuery({ flow_id: params.flowId, q: params.q, limit: params.limit })}`);
+  getValidationHistory(params: ValidationHistoryFilters = {}): Promise<ValidationHistoryResponse> {
+    return request(
+      `/api/validation-history${buildQuery({
+        flow_id: params.flowId,
+        q: params.q,
+        source: params.source,
+        date_from: params.dateFrom,
+        date_to: params.dateTo,
+        change_type: params.changeType,
+        entry_type: params.entryType,
+        limit: params.limit,
+      })}`,
+    );
   },
 
   // Drill-down (2026-09-06, demande de l'encadrant) : connexions individuelles sous-jacentes

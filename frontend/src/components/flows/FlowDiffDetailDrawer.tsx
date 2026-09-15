@@ -19,17 +19,20 @@ import { ActionOverrideDialog } from "./ActionOverrideDialog";
 import { DeclareClaimDialog } from "./DeclareClaimDialog";
 import { FlowLogEntriesDrawer } from "./FlowLogEntriesDrawer";
 import { invertedAction } from "../../api/types";
-import { DIFF_STATUS_COLORS, DIFF_STATUS_LABELS, DIFF_FIELD_LABELS, describeAction, validationStatusColor } from "../../theme/colors";
+import { DIFF_STATUS_COLORS, DIFF_STATUS_LABELS, DIFF_FIELD_LABELS, STATUS_LABELS, ACTION_LABELS, describeAction, validationStatusColor, displayAxisLabel } from "../../theme/colors";
 
 // Répartition chiffrée jamais le mot brut "Mixed" (2026-09-06) -- avant_allow/avant_block/
 // apres_allow/apres_block ne sont renseignés par le backend que du côté effectivement
-// "Mixed" (cf. Services/validation_cycle_engine.py::diff_for_flow).
+// "Mixed" (cf. Services/validation_cycle_engine.py::diff_for_flow). ACTION_LABELS[value] en
+// plus (2026-09-12) : ce formateur sert aussi cycle_dominant_action (Allow/Block bruts pour
+// un champ STRUCTURAL_FIELDS non-Mixed) -- jamais le mot anglais tel quel dans ce panneau.
 function formatDiffAction(value: unknown, allowCount?: number, blockCount?: number): string {
   if (value === null || value === undefined) return "—";
   if (value === "Mixed" && allowCount !== undefined && blockCount !== undefined) {
     return describeAction("Mixed", allowCount, blockCount).label;
   }
-  return String(value);
+  const text = String(value);
+  return ACTION_LABELS[text] ?? text;
 }
 
 // Panneau de détail cliquable pour un écart de Cycle de validation -- remplace le tooltip
@@ -193,7 +196,7 @@ export function FlowDiffDetailDrawer({ flow, onClose }: FlowDiffDetailDrawerProp
             </TableRow>
             <TableRow>
               <TableCell sx={{ fontWeight: 600 }}>Criticité</TableCell>
-              <TableCell>{flow.criticality_label ?? "non qualifié"}</TableCell>
+              <TableCell>{flow.criticality_label ? displayAxisLabel(flow.criticality_label) : "non qualifié"}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell sx={{ fontWeight: 600 }}>Occurrences (ce cycle)</TableCell>
@@ -224,7 +227,7 @@ export function FlowDiffDetailDrawer({ flow, onClose }: FlowDiffDetailDrawerProp
             <Chip
               size="small"
               variant="outlined"
-              label={flow.validation_status}
+              label={STATUS_LABELS[flow.validation_status] ?? flow.validation_status}
               sx={{ borderColor: validationStatusColor(flow.validation_status), color: validationStatusColor(flow.validation_status) }}
             />
           )}

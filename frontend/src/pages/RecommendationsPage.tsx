@@ -12,7 +12,7 @@ import { RecommendationsLegend } from "../components/recommendations/Recommendat
 import { RecommendationDetailDrawer } from "../components/recommendations/RecommendationDetailDrawer";
 import { TableSkeleton } from "../components/common/TableSkeleton";
 import { KeywordSearchField } from "../components/common/KeywordSearchField";
-import { FINDING_TYPE_LABELS } from "../theme/colors";
+import { FINDING_TYPE_LABELS, STATUS_LABELS } from "../theme/colors";
 import type { RecommendationFilters } from "../api/types";
 
 const STATUS_OPTIONS = ["pending", "acknowledged", "dismissed"];
@@ -55,7 +55,7 @@ export function RecommendationsPage() {
           <MenuItem value="">Tous</MenuItem>
           {STATUS_OPTIONS.map((s) => (
             <MenuItem key={s} value={s}>
-              {s}
+              {STATUS_LABELS[s] ?? s}
             </MenuItem>
           ))}
         </TextField>

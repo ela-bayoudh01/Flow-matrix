@@ -17,7 +17,8 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..flow_filters import FLOW_SEARCH_COLUMNS, apply_filters
-from ..models import Flow, FlowSnapshot, FlowValidationHistory, RuleEnforcementClaim, ValidationCycle
+from ..flows_query import apply_cell_filter
+from ..models import Flow, FlowSnapshot, FlowValidationHistory, NetworkPolicy, RuleEnforcementClaim, ValidationCycle
 from ..search_utils import apply_keyword_search
 from ..time_utils import utcnow
 from . import matrix_engine, subnet_observation
@@ -232,7 +233,14 @@ def diff_for_flow(flow: Flow, snapshot: Optional[FlowSnapshot]) -> dict:
 
 
 def compute_diff(
-    session: Session, filters: dict, q: Optional[str] = None, src_cidr: Optional[str] = None
+    session: Session,
+    filters: dict,
+    q: Optional[str] = None,
+    src_cidr: Optional[str] = None,
+    *,
+    dimension: Optional[str] = None,
+    row_value: Optional[str] = None,
+    col_value: Optional[str] = None,
 ) -> tuple[list[tuple[Flow, dict]], dict, dict[str, ValidationCycle]]:
     """Diff de TOUS les Flow correspondant aux filtres simples (pas de pagination ici --
     gérée par l'appelant, cf. validation_cycle_query.py). Chaque Flow est comparé à la
@@ -251,9 +259,17 @@ def compute_diff(
     aucune régression. Filtrage fait en Python (pas en SQL, pas d'opérateur CIDR natif en
     SQLite) via ipaddress, silencieux sur une IP invalide plutôt que de faire échouer le
     calcul -- même principe que Services/subnet_observation.py::cidr_for_ip.
+
+    `dimension`/`row_value`/`col_value` (2026-09-12, demande de l'encadrant) : optionnels,
+    restreignent à une cellule précise de la Matrice Réelle -- réutilise
+    flows_query.apply_cell_filter (même filtre de cellule ET même exclusion des Flow inactifs
+    depuis la dernière clôture, `Flow.cycle_occurrence_count > 0`, que build_matrix()) pour
+    que le tiroir de détail d'une cellule en mode "Colorer par écart" puisse annoter chaque
+    flux affiché de son statut d'écart, sans jamais en révéler un absent de la cellule.
     """
-    flows = apply_keyword_search(
-        apply_filters(session.query(Flow), filters), q, FLOW_SEARCH_COLUMNS
+    flows = apply_cell_filter(
+        apply_keyword_search(apply_filters(session.query(Flow), filters), q, FLOW_SEARCH_COLUMNS),
+        dimension, row_value, col_value,
     ).order_by(Flow.id).all()
 
     if src_cidr is not None:
@@ -707,3 +723,25 @@ def build_cycle_report(session: Session, cycle: ValidationCycle) -> list[tuple[F
         query = query.filter(FlowValidationHistory.created_at > since)
 
     return query.order_by(FlowValidationHistory.created_at).all()
+
+
+def build_cycle_network_policies_report(session: Session, cycle: ValidationCycle) -> list[NetworkPolicy]:
+    """Politiques de sous-réseau (`NetworkPolicy`) créées pour `cycle.source`, depuis la
+    clôture du cycle précédent de cette même source (exclue) jusqu'à la clôture de `cycle`
+    (incluse) -- même fenêtrage que build_cycle_report ci-dessus pour les décisions de flux
+    (2026-09-14, demande de l'encadrant : les politiques de sous-réseau décidées durant un
+    cycle doivent aussi apparaître dans son rapport de clôture, elles sont ignorées jusqu'ici).
+    Trié chronologiquement.
+    """
+    previous = previous_cycle_for(session, cycle)
+    since = previous.closed_at if previous is not None else None
+
+    query = (
+        session.query(NetworkPolicy)
+        .filter(NetworkPolicy.source == cycle.source)
+        .filter(NetworkPolicy.created_at <= cycle.closed_at)
+    )
+    if since is not None:
+        query = query.filter(NetworkPolicy.created_at > since)
+
+    return query.order_by(NetworkPolicy.created_at).all()

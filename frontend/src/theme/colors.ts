@@ -24,6 +24,26 @@ export const CRITICALITY_COLORS: Record<string, string> = {
 export const CRITICALITY_ORDER = ["critical", "high", "medium", "low"];
 export const NON_QUALIFIE_COLOR = STATUS_COLORS.muted;
 
+// Traduction affichage (2026-09-13, demande de l'encadrant -- "la plateforme doit être
+// entièrement en français") : low/medium/high/critical restent les identifiants techniques
+// EXACTS partout ailleurs (clé de CRITICALITY_COLORS ci-dessus, valeur de filtre envoyée à
+// l'API, criticality_label en base) -- seule cette table d'affichage traduit le mot montré à
+// l'écran, jamais la valeur elle-même (changer la valeur casserait les filtres et les
+// couleurs conditionnelles qui s'appuient dessus). Terminologie standard cybersécurité,
+// chaînée dans displayAxisLabel ci-dessous -- une seule fonction d'affichage pour
+// Action/Statut/Criticité, jamais une 4ᵉ définition séparée.
+export const CRITICALITY_LABELS: Record<string, string> = {
+  low: "Faible",
+  medium: "Moyenne",
+  high: "Élevée",
+  critical: "Critique",
+  // Pas une vraie valeur de criticality_label (NULL en base, cf. FilterBar.tsx) -- "clé"
+  // synthétique utilisée par les répartitions par criticité (FlowsSummary.criticality_breakdown
+  // ct.) pour désigner les flux jamais qualifiés. Traduite ici pour rester cohérente partout
+  // où elle apparaît à côté des 4 vraies valeurs (mêmes composants, même table de recherche).
+  non_qualifie: "Non qualifié",
+};
+
 export function criticalityColor(label: string | null | undefined): string {
   if (!label) return NON_QUALIFIE_COLOR;
   return CRITICALITY_COLORS[label] ?? NON_QUALIFIE_COLOR;
@@ -44,6 +64,22 @@ export function validationStatusColor(status: string): string {
   if (status === "blocked" || status === "rejected" || status === "dismissed") return STATUS_COLORS.critical;
   return STATUS_COLORS.muted; // pending
 }
+
+// Traduction affichage des mêmes statuts bruts (2026-09-12, demande de l'encadrant après
+// démo -- "la plateforme doit être entièrement en français") -- une seule table, réutilisée
+// partout où un de ces statuts est affiché tel quel (FlowsTable.tsx, FlowDiffDetailDrawer.tsx,
+// AclProposalsTable.tsx, RecommendationsTable.tsx, filtres...), même principe que
+// validationStatusColor ci-dessus (couleur par sens, pas par mot). Les 3 vocabulaires ne se
+// chevauchent jamais en valeur ("approved" existe pour Flow ET AclProposal, mais désigne la
+// même idée dans les deux cas) -- une seule table plate suffit, jamais 3 tables redondantes.
+export const STATUS_LABELS: Record<string, string> = {
+  pending: "En attente",
+  approved: "Approuvé",
+  blocked: "Bloqué",
+  acknowledged: "Traité",
+  dismissed: "Rejeté",
+  rejected: "Rejeté",
+};
 
 // Identité : finding_type (Recommendation Engine) et intent (ACL Engine) partagent les mêmes
 // couleurs quand ils désignent la même origine ("tighten" vient de "trop_permissive", etc.)
@@ -86,10 +122,21 @@ export const ACTION_COLORS: Record<string, string> = {
   Mixed: STATUS_COLORS.warning,
 };
 
+// Traduction affichage de la valeur brute stockée (Flow.dominant_action/decided_action,
+// NetworkPolicy.action...) -- jamais la valeur elle-même, toujours "Allow"/"Block" en base et
+// dans l'API (2026-09-12, "la plateforme doit être entièrement en français"). Même principe
+// que STATUS_LABELS ci-dessus : une seule table, réutilisée partout (describeAction,
+// displayAxisLabel, et les rares endroits qui affichent l'action sans passer par ces deux
+// fonctions -- ValidationCyclePage.tsx/NetworkPoliciesPage.tsx, tables de politiques).
+export const ACTION_LABELS: Record<string, string> = {
+  Allow: "Autorisé",
+  Block: "Bloqué",
+};
+
 // "Mixed" est un terme de debug interne, jamais présentable tel quel (demande de
 // l'encadrant, 2026-09-06) -- même après avoir restreint le calcul au cycle en cours
 // (cf. FlowOut.cycle_dominant_action), un flux peut légitimement avoir plusieurs actions
-// dans la même fenêtre. Remplacé par une répartition chiffrée ("18 Allow / 2 Block"),
+// dans la même fenêtre. Remplacé par une répartition chiffrée ("18 Autorisé / 2 Bloqué"),
 // jamais le mot brut -- partout où une action de flux est affichée (ActionChip, panneaux de
 // détail, fiche de changement de règle).
 export interface ActionDisplay {
@@ -99,16 +146,20 @@ export interface ActionDisplay {
 
 export function describeAction(action: string | null, allowCount: number, blockCount: number): ActionDisplay {
   if (action !== "Mixed") {
-    return { label: action ?? "—", color: ACTION_COLORS[action ?? ""] ?? STATUS_COLORS.muted };
+    return { label: action ? (ACTION_LABELS[action] ?? action) : "—", color: ACTION_COLORS[action ?? ""] ?? STATUS_COLORS.muted };
   }
-  return { label: `${allowCount} Allow / ${blockCount} Block`, color: ACTION_COLORS.Mixed };
+  return { label: `${allowCount} ${ACTION_LABELS.Allow} / ${blockCount} ${ACTION_LABELS.Block}`, color: ACTION_COLORS.Mixed };
 }
 
 // Même principe que describeAction ci-dessus, appliqué à un libellé d'axe de matrice (ex.
 // l'en-tête de colonne "Mixed" sur la dimension "Zone × Action") -- pas de répartition
-// chiffrée disponible à cet endroit (juste un nom de colonne), donc un libellé neutre.
+// chiffrée disponible à cet endroit (juste un nom de colonne), donc un libellé neutre. Sert
+// aussi de traduction générique pour les autres colonnes/valeurs textuelles (statuts de
+// validation sur "Zone × Statut de validation" par exemple) -- STATUS_LABELS en filet, jamais
+// une 3ᵉ table de correspondance.
 export function displayAxisLabel(label: string): string {
-  return label === "Mixed" ? "Trafic partagé" : label;
+  if (label === "Mixed") return "Trafic partagé";
+  return ACTION_LABELS[label] ?? STATUS_LABELS[label] ?? CRITICALITY_LABELS[label] ?? label;
 }
 
 // Écart d'un Flow par rapport à la dernière Matrice Validée (Cycle de validation) --

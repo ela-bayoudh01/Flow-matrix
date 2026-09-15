@@ -7,7 +7,7 @@ import Button from "@mui/material/Button";
 import Collapse from "@mui/material/Collapse";
 import type { FlowFilterValues } from "../../api/types";
 import { useZoneOptions } from "../../hooks/useZoneOptions";
-import { displayAxisLabel } from "../../theme/colors";
+import { displayAxisLabel, STATUS_LABELS } from "../../theme/colors";
 
 const ACTION_OPTIONS = ["Allow", "Block", "Mixed"];
 const PROTOCOL_OPTIONS = ["tcp", "udp", "icmp", "ipv6-icmp"];
@@ -131,7 +131,7 @@ export function FilterBar({ value, onChange, hideSourceFilter = false }: FilterB
           <MenuItem value="">Toutes</MenuItem>
           {CRITICALITY_OPTIONS.map((c) => (
             <MenuItem key={c} value={c}>
-              {c}
+              {displayAxisLabel(c)}
             </MenuItem>
           ))}
         </TextField>
@@ -191,7 +191,7 @@ export function FilterBar({ value, onChange, hideSourceFilter = false }: FilterB
             <MenuItem value="">Tous</MenuItem>
             {VALIDATION_STATUS_OPTIONS.map((s) => (
               <MenuItem key={s} value={s}>
-                {s}
+                {STATUS_LABELS[s] ?? s}
               </MenuItem>
             ))}
           </TextField>

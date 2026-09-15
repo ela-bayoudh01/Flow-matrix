@@ -28,13 +28,21 @@ import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 // composants, endpoints, tests intacts, route directe (/network-policies) toujours
 // fonctionnelle -- juste cette ligne à restaurer ici (import LanOutlinedIcon en plus) si le
 // besoin d'une page séparée revient.
+// Ordre chronologique du scénario d'utilisation réel (2026-09-12, demande de l'encadrant
+// après démo) : Dashboard (vue d'ensemble) -> Import (faire entrer des logs) -> Matrice
+// (explorer) -> Cycle de validation (décider) -> Table des flux (lister/consulter) ->
+// Historique des validations (revoir ce qui a été décidé) -- plus l'ordre de construction
+// historique du projet, qui ne reflétait pas la logique d'usage.
 const NAV_ITEMS = [
   { label: "Dashboard", to: "/dashboard", icon: SpaceDashboardOutlinedIcon },
   { label: "Import", to: "/import", icon: CloudUploadOutlinedIcon },
   { label: "Matrice", to: "/matrix", icon: GridViewOutlinedIcon },
-  { label: "Table des flux", to: "/flows", icon: ListAltOutlinedIcon },
-  { label: "Historique", to: "/history", icon: HistoryOutlinedIcon },
   { label: "Cycle de validation", to: "/validation-cycle", icon: CompareArrowsOutlinedIcon },
+  { label: "Table des flux", to: "/flows", icon: ListAltOutlinedIcon },
+  // "Historique" renommé "Historique des validations" (2026-09-12, demande de l'encadrant) --
+  // ambigu seul ("historique de quoi ?") pour qui découvre l'outil ; cohérent avec le titre
+  // déjà affiché en haut de HistoryPage.tsx.
+  { label: "Historique des validations", to: "/history", icon: HistoryOutlinedIcon },
 ];
 
 const STORAGE_KEY = "sidebar-collapsed";
@@ -126,13 +134,15 @@ export function Sidebar() {
           );
           return (
             <li key={item.to}>
-              {collapsed ? (
-                <Tooltip title={item.label} placement="right">
-                  {link}
-                </Tooltip>
-              ) : (
-                link
-              )}
+              {/* Infobulle systématique, pas seulement en mode replié (2026-09-12, demande de
+                  l'encadrant) : même déplié, un libellé long ("Historique des validations")
+                  peut être tronqué par la largeur fixe de la barre (noWrap ci-dessus) --
+                  l'infobulle reste le seul moyen fiable de voir le libellé complet dans les
+                  deux cas, et devient la seule indication du tout en mode replié (icônes
+                  seules). */}
+              <Tooltip title={item.label} placement="right">
+                {link}
+              </Tooltip>
             </li>
           );
         })}

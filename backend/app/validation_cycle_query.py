@@ -26,6 +26,9 @@ def list_flows_with_diff(
     diff_status: Optional[str] = None,
     q: Optional[str] = None,
     src_cidr: Optional[str] = None,
+    dimension: Optional[str] = None,
+    row_value: Optional[str] = None,
+    col_value: Optional[str] = None,
     **filters,
 ) -> dict:
     unknown = set(filters) - set(FILTER_COLUMNS)
@@ -38,7 +41,11 @@ def list_flows_with_diff(
     # src_ip tombe dans ce réseau -- utilisé par le "+" d'une ligne de sous-réseau sur la page
     # Cycle de validation (voir Services/validation_cycle_engine.py::compute_diff). Absent par
     # défaut -> comportement inchangé pour tous les appelants existants.
-    pairs, summary, cycles_by_source = validation_cycle_engine.compute_diff(session, filters, q, src_cidr)
+    # dimension/row_value/col_value (2026-09-12) : restreint à une cellule de la Matrice
+    # Réelle -- colonne "Écart" du tiroir de détail en mode "Colorer par écart".
+    pairs, summary, cycles_by_source = validation_cycle_engine.compute_diff(
+        session, filters, q, src_cidr, dimension=dimension, row_value=row_value, col_value=col_value,
+    )
 
     if diff_status is not None:
         pairs = [(flow, diff) for flow, diff in pairs if diff["status"] == diff_status]

@@ -1,3 +1,5 @@
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
@@ -9,18 +11,24 @@ from sqlalchemy.orm import Session
 from . import models  # noqa: F401  (enregistre les modèles auprès de Base.metadata)
 from .acl_proposal_history_query import DEFAULT_LIMIT as ACL_PROPOSAL_HISTORY_DEFAULT_LIMIT
 from .acl_proposal_history_query import list_acl_proposal_history
-from .fiche_pdf import build_action_change_pdf, build_cycle_report_pdf, build_network_policy_pdf, build_rule_not_enforced_pdf
+from .fiche_pdf import (
+    build_action_change_pdf,
+    build_cycle_report_pdf,
+    build_network_policy_pdf,
+    build_rule_not_enforced_pdf,
+    build_technical_guide_pdf,
+)
 from .acl_proposal_review import apply_acl_proposal_review
 from .acl_proposals_query import DEFAULT_LIMIT as ACL_PROPOSALS_DEFAULT_LIMIT
 from .acl_proposals_query import list_acl_proposals
 from .database import Base, engine, get_db
 from .flow_filters import flow_filter_params
 from .flow_validation import apply_rule_change, apply_validation
-from .flows_query import DEFAULT_LIMIT, list_flows
+from .flows_query import DEFAULT_LIMIT, list_flows, list_known_sources, list_source_coverage
 from .ingestion import import_log_file
 from .log_entries_query import DEFAULT_LIMIT as LOG_ENTRIES_DEFAULT_LIMIT
 from .log_entries_query import list_log_entries_for_flow
-from .models import AclProposal, Flow, FlowSnapshot, FlowValidationHistory, NetworkPolicy, RuleEnforcementClaim, RuleRecommendation, ValidationCycle
+from .models import AclProposal, Flow, FlowSnapshot, FlowValidationHistory, ImportLog, NetworkPolicy, RuleEnforcementClaim, RuleRecommendation, ValidationCycle
 from .recommendations_query import DEFAULT_LIMIT as RECOMMENDATIONS_DEFAULT_LIMIT
 from .recommendations_query import list_recommendations
 from . import import_log
@@ -37,10 +45,13 @@ from .schemas import (
     FlowDiffResponse,
     FlowOut,
     FlowsResponse,
+    ImportLogErrorsResponse,
     ImportLogsResponse,
     ImportSummary,
     LogEntriesResponse,
     MatrixResponse,
+    SourcesResponse,
+    SourceCoverageResponse,
     NetworkPoliciesResponse,
     NetworkPolicyCreate,
     NetworkPolicyOut,
@@ -94,10 +105,34 @@ VALID_RECOMMENDATION_STATUSES = {"acknowledged", "dismissed"}
 
 VALID_ACL_PROPOSAL_STATUSES = {"approved", "rejected"}
 
+# Guide technique (2026-09-15, dernier jour de stage, demande de l'encadrant) -- SEULE
+# exception du projet où le backend lit un fichier hors de `backend/` : `docs/` vit à la racine
+# du dépôt (Path(__file__).parent.parent.parent, backend/app/ -> backend/ -> racine), jamais
+# copié/dupliqué dans `backend/app/assets/` pour rester une SEULE source de vérité -- une
+# modification de `docs/GUIDE-TECHNIQUE.md` se reflète immédiatement au prochain téléchargement,
+# sans étape de synchronisation à oublier.
+_TECHNICAL_GUIDE_PATH = Path(__file__).parent.parent.parent / "docs" / "GUIDE-TECHNIQUE.md"
+
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/technical-guide.pdf")
+def get_technical_guide_pdf():
+    # Régénéré à la demande depuis docs/GUIDE-TECHNIQUE.md à chaque appel (jamais mis en cache
+    # ni persisté en base) -- même principe que le rapport de clôture de cycle : toujours à
+    # jour avec la dernière version du fichier, retéléchargeable indéfiniment.
+    if not _TECHNICAL_GUIDE_PATH.exists():
+        raise HTTPException(status_code=404, detail="Guide technique introuvable -- docs/GUIDE-TECHNIQUE.md absent.")
+    markdown_text = _TECHNICAL_GUIDE_PATH.read_text(encoding="utf-8")
+    pdf_bytes = build_technical_guide_pdf(markdown_text)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="guide_technique_flow_guard.pdf"'},
+    )
 
 
 @app.post("/api/logs/import", response_model=ImportSummary)
@@ -120,6 +155,16 @@ def get_import_logs(limit: int = import_log.DEFAULT_LIMIT, offset: int = 0, db: 
     return import_log.list_import_logs(db, limit=limit, offset=offset)
 
 
+@app.get("/api/import-logs/{import_log_id}/errors", response_model=ImportLogErrorsResponse)
+def get_import_log_errors(import_log_id: int, db: Session = Depends(get_db)):
+    # Détail des lignes en échec d'un import précis (2026-09-14, demande de l'encadrant) --
+    # affiché derrière un clic sur le nombre d'erreurs de la page Import (auparavant compté
+    # seulement, sans moyen de voir laquelle ni pourquoi). Voir import_log.list_import_log_errors.
+    if db.get(ImportLog, import_log_id) is None:
+        raise HTTPException(status_code=404, detail="Import introuvable")
+    return {"items": import_log.list_import_log_errors(db, import_log_id)}
+
+
 @app.post("/api/flows/qualify", response_model=QualificationRunSummary)
 def run_qualification(source: Optional[str] = None, db: Session = Depends(get_db)):
     # Déclenchement explicite, même principe que Recommendation Engine et ACL Engine --
@@ -129,6 +174,25 @@ def run_qualification(source: Optional[str] = None, db: Session = Depends(get_db
     # sans risque après chaque import. Voir CLAUDE.md "Checklist après import" pour l'ordre
     # complet (qualification avant recommandations : trop_permissive dépend de criticality_label).
     return qualification_engine.qualify_all(db, source=source)
+
+
+@app.get("/api/sources", response_model=SourcesResponse)
+def get_sources(db: Session = Depends(get_db)):
+    # Toutes les sources connues, indépendamment de l'activité du cycle courant (2026-09-12,
+    # bug réel corrigé -- voir flows_query.list_known_sources) : le sélecteur "Source
+    # (firewall)" (useSourceOptions.ts) dérivait auparavant de GET /api/matrix?dimension=
+    # source_zone, vidée à tort juste après une clôture de cycle tant qu'aucun nouvel import
+    # n'a eu lieu (build_matrix() exclut désormais les Flow inactifs ce cycle).
+    return {"sources": list_known_sources(db)}
+
+
+@app.get("/api/sources/coverage", response_model=SourceCoverageResponse)
+def get_sources_coverage(db: Session = Depends(get_db)):
+    # Période couverte + dernier import par source (2026-09-12, demande de l'encadrant après
+    # démo) -- une seule requête, réutilisée par le Dashboard (toutes les sources), la
+    # Matrice et la Table des flux (la source actuellement filtrée). Voir
+    # flows_query.list_source_coverage.
+    return {"items": list_source_coverage(db)}
 
 
 @app.get("/api/matrix", response_model=MatrixResponse)
@@ -284,11 +348,27 @@ def get_rule_enforcement_claim_fiche(claim_id: int, db: Session = Depends(get_db
 def get_validation_history(
     flow_id: Optional[int] = None,
     q: Optional[str] = None,
+    source: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    change_type: Optional[str] = None,
+    entry_type: Optional[str] = None,
     limit: int = HISTORY_DEFAULT_LIMIT,
     offset: int = 0,
     db: Session = Depends(get_db),
 ):
-    return list_validation_history(db, flow_id=flow_id, q=q, limit=limit, offset=offset)
+    # source/date_from/date_to/change_type (2026-09-12, demande de l'encadrant) : tous
+    # optionnels, absents -> comportement inchangé. entry_type (2026-09-13, fusion avec
+    # NetworkPolicy -- "une politique de sous-réseau est aussi une vraie décision à tracer") :
+    # "flow" | "network_policy" | absent = les deux, fusionnés et triés par date. Voir
+    # validation_history_query.py.
+    try:
+        return list_validation_history(
+            db, flow_id=flow_id, q=q, source=source, date_from=date_from, date_to=date_to,
+            change_type=change_type, entry_type=entry_type, limit=limit, offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/validation-history/{history_id}/fiche.pdf")
@@ -473,7 +553,10 @@ def get_cycle_report(cycle_id: int, db: Session = Depends(get_db)):
     if cycle is None:
         raise HTTPException(status_code=404, detail="Cycle introuvable")
     rows = validation_cycle_engine.build_cycle_report(db, cycle)
-    pdf_bytes = build_cycle_report_pdf(cycle, rows)
+    # Politiques de sous-réseau décidées durant ce cycle (2026-09-14, demande de l'encadrant) --
+    # même fenêtrage que `rows` ci-dessus, voir build_cycle_network_policies_report.
+    policies = validation_cycle_engine.build_cycle_network_policies_report(db, cycle)
+    pdf_bytes = build_cycle_report_pdf(cycle, rows, policies)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -486,6 +569,9 @@ def get_validation_cycle_diff(
     diff_status: Optional[str] = None,
     q: Optional[str] = None,
     src_cidr: Optional[str] = None,
+    dimension: Optional[str] = None,
+    row_value: Optional[str] = None,
+    col_value: Optional[str] = None,
     filters: dict = Depends(flow_filter_params),
     limit: int = VALIDATION_CYCLE_DIFF_DEFAULT_LIMIT,
     offset: int = 0,
@@ -498,8 +584,14 @@ def get_validation_cycle_diff(
     # mot-clé (demande de l'encadrant, 2026-08-25). src_cidr (2026-09-11) : optionnel, restreint
     # aux Flow de ce sous-réseau -- utilisé par le "+" d'une ligne de sous-réseau sur la page
     # Cycle de validation ; absent -> comportement inchangé (voir list_flows_with_diff).
+    # dimension/row_value/col_value (2026-09-12) : optionnels, restreignent à une cellule de la
+    # Matrice Réelle -- colonne "Écart" du tiroir de détail (FlowDetailDrawer.tsx) en mode
+    # "Colorer par écart", même mécanisme que /api/flows (flows_query.apply_cell_filter).
     try:
-        return list_flows_with_diff(db, limit=limit, offset=offset, diff_status=diff_status, q=q, src_cidr=src_cidr, **filters)
+        return list_flows_with_diff(
+            db, limit=limit, offset=offset, diff_status=diff_status, q=q, src_cidr=src_cidr,
+            dimension=dimension, row_value=row_value, col_value=col_value, **filters,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

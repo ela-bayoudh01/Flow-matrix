@@ -1,9 +1,9 @@
 """Schémas Pydantic (I/O API)."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ImportSummary(BaseModel):
@@ -33,6 +33,21 @@ class ImportLogOut(BaseModel):
 class ImportLogsResponse(BaseModel):
     items: list[ImportLogOut]
     total_count: int
+
+
+class ImportLogErrorOut(BaseModel):
+    """Détail d'une ligne en échec de parsing (2026-09-14, demande de l'encadrant) -- affiché
+    derrière un clic sur le nombre d'erreurs de la page Import."""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    line_number: int
+    raw_line: str
+    error_message: str
+
+
+class ImportLogErrorsResponse(BaseModel):
+    items: list[ImportLogErrorOut]
 
 
 class QualificationRunSummary(BaseModel):
@@ -123,6 +138,30 @@ class MatrixResponse(BaseModel):
     dimension_notice: Optional[str] = None
 
 
+class SourcesResponse(BaseModel):
+    """Toutes les sources connues, indépendamment de l'activité du cycle courant -- voir
+    flows_query.list_known_sources() (2026-09-12, bug réel corrigé)."""
+
+    sources: list[str]
+
+
+class SourceCoverageOut(BaseModel):
+    """Période couverte par les Flow d'une source + date du dernier import -- voir
+    flows_query.list_source_coverage() (2026-09-12, demande de l'encadrant). Réutilisé tel
+    quel par le Dashboard (toutes les sources), la Matrice et la Table des flux (la source
+    actuellement filtrée)."""
+
+    source: str
+    first_seen_at: Optional[datetime]
+    last_seen_at: Optional[datetime]
+    last_imported_at: Optional[datetime]
+    flow_count: int
+
+
+class SourceCoverageResponse(BaseModel):
+    items: list[SourceCoverageOut]
+
+
 class ValidationUpdate(BaseModel):
     """Valider/Bloquer classique -- toujours immédiat, jamais de justification. Voir
     RuleChangeUpdate pour le bouton dédié "Changer la règle"."""
@@ -158,25 +197,59 @@ class RuleEnforcementClaimOut(BaseModel):
     claim_count: int
 
 
-class ValidationHistoryOut(BaseModel):
+class FlowHistoryEntryOut(BaseModel):
     """Une entrée de FlowValidationHistory, avec le contexte du Flow concerné inclus."""
 
+    entry_type: Literal["flow"] = "flow"
     id: int
-    flow_id: int
+    created_at: datetime
     source: Optional[str]
+    # Renommé depuis `validated_by` (2026-09-13, fusion avec NetworkPolicy dans l'Historique
+    # des validations) -- unifie le nom de champ avec NetworkPolicyHistoryEntryOut.decided_by
+    # ci-dessous (même idée -- qui a décidé -- deux noms de colonne différents en base).
+    decided_by: Optional[str]
+    justification: Optional[str]
+
+    flow_id: int
     src_ip: str
     dst_ip: str
     dst_port: Optional[int]
     protocol: str
     old_status: Optional[str]
     new_status: str
-    validated_by: Optional[str]
-    created_at: datetime
     # Renseignés uniquement pour une entrée issue d'une inversion d'action (2026-09-03) --
     # None sur une entrée "classique" (Valider/Bloquer qui confirme l'observé).
-    justification: Optional[str]
     observed_action_before: Optional[str]
     decided_action: Optional[str]
+
+
+class NetworkPolicyHistoryEntryOut(BaseModel):
+    """Une entrée NetworkPolicy affichée dans l'Historique des validations (2026-09-13, demande
+    de l'encadrant : une politique de sous-réseau est aussi une vraie décision à tracer, au même
+    titre qu'un changement de règle sur un flux précis) -- mêmes champs que la fiche PDF déjà
+    existante (build_network_policy_pdf), rien de nouveau, juste réutilisé ici."""
+
+    entry_type: Literal["network_policy"] = "network_policy"
+    id: int
+    created_at: datetime
+    source: Optional[str]
+    decided_by: Optional[str]
+    justification: str  # toujours renseignée (obligatoire à la création), contrairement au flux
+
+    src_cidr: str
+    destination: str
+    protocol: Optional[str]
+    dst_port: Optional[int]
+    action: str  # "Allow" | "Block"
+
+
+# Union discriminée sur `entry_type` (2026-09-13) -- pas une ligne "large" avec des champs
+# Optional des deux côtés qui ne s'appliqueraient qu'à un seul type : chaque variante ne porte
+# que ses propres champs réels, et se traduit naturellement en union discriminée TypeScript
+# côté frontend (narrowing sur `entry.entry_type`, cf. HistoryPage.tsx).
+ValidationHistoryEntryOut = Annotated[
+    Union[FlowHistoryEntryOut, NetworkPolicyHistoryEntryOut], Field(discriminator="entry_type")
+]
 
 
 class LogEntryOut(BaseModel):
@@ -209,7 +282,7 @@ class LogEntriesResponse(BaseModel):
 
 
 class ValidationHistoryResponse(BaseModel):
-    items: list[ValidationHistoryOut]
+    items: list[ValidationHistoryEntryOut]
     total_count: int
 
 

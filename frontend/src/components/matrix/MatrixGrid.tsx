@@ -199,7 +199,7 @@ export function MatrixGrid({ cells, colorMode, onCellClick, rowAxisLabel, colAxi
           const worst = worstCriticality(cell.criticality_breakdown);
           if (!worst) return `${cell.flow_count} flux non qualifié(s)`;
           const worstCount = cell.criticality_breakdown[worst];
-          return `${worstCount} flux en "${worst}" sur ${cell.flow_count} au total dans cette cellule`;
+          return `${worstCount} flux en "${displayAxisLabel(worst)}" sur ${cell.flow_count} au total dans cette cellule`;
         }
         if (colorMode === "debit") {
           const bitrate = cellBitrate(cell);

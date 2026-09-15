@@ -13,7 +13,7 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import CloseIcon from "@mui/icons-material/Close";
 import type { RuleRecommendationOut } from "../../api/types";
 import { useReviewRecommendation } from "../../hooks/useRecommendations";
-import { FINDING_TYPE_LABELS, FINDING_TYPE_COLORS, validationStatusColor } from "../../theme/colors";
+import { FINDING_TYPE_LABELS, FINDING_TYPE_COLORS, STATUS_LABELS, validationStatusColor } from "../../theme/colors";
 
 // "Traiter" n'a pas le même sens selon le type de finding : resserrer une règle trop
 // permissive, supprimer une règle obsolète -- mais pour "sans_regle_explicite", il n'y a pas
@@ -181,7 +181,7 @@ export function RecommendationDetailDrawer({ recommendation, onClose }: Recommen
               <Chip
                 size="small"
                 variant="outlined"
-                label={recommendation.status}
+                label={STATUS_LABELS[recommendation.status] ?? recommendation.status}
                 sx={{ borderColor: validationStatusColor(recommendation.status), color: validationStatusColor(recommendation.status) }}
               />
               {recommendation.reviewed_at && (

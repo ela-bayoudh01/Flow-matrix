@@ -13,7 +13,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DownloadIcon from "@mui/icons-material/Download";
 import type { AclProposalOut } from "../../api/types";
 import { useAclProposalHistory, useReviewAclProposal } from "../../hooks/useAclProposals";
-import { INTENT_LABELS, INTENT_COLORS, validationStatusColor } from "../../theme/colors";
+import { INTENT_LABELS, INTENT_COLORS, STATUS_LABELS, validationStatusColor } from "../../theme/colors";
 
 function RationaleRow({ label, value }: { label: string; value: string }) {
   return (
@@ -173,7 +173,7 @@ export function AclProposalDetailDrawer({ proposal, onClose }: AclProposalDetail
               <Chip
                 size="small"
                 variant="outlined"
-                label={proposal.status}
+                label={STATUS_LABELS[proposal.status] ?? proposal.status}
                 sx={{ borderColor: validationStatusColor(proposal.status), color: validationStatusColor(proposal.status) }}
               />
               {proposal.validated_at && (

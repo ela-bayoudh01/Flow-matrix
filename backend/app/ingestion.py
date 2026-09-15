@@ -47,6 +47,14 @@ def import_log_file(session: Session, file: IO[bytes], filename: str) -> dict:
 
     lines_read = 0
     parsing_errors = 0
+    # Détail de chaque ligne en échec (2026-09-14, demande de l'encadrant) -- jusqu'ici
+    # seulement compté (`parsing_errors`) et journalisé côté serveur (logger.warning),
+    # jamais consultable depuis l'interface : impossible de distinguer une erreur isolée
+    # bénigne d'un vrai problème de format sans aller lire les logs serveur à la main.
+    # Ligne brute COMPLÈTE gardée ici (pas tronquée à 120 caractères comme le message de log
+    # ci-dessous, qui ne sert qu'au diagnostic serveur) -- persistée par
+    # import_log.record_import(), jamais exposée dans ImportSummary (schéma API inchangé).
+    parsing_error_details: list[dict] = []
     log_entries_created = 0
     log_entries_skipped_duplicate = 0
     flows_touched = set()
@@ -60,8 +68,11 @@ def import_log_file(session: Session, file: IO[bytes], filename: str) -> dict:
 
         try:
             parsed = parse_line(raw_line)
-        except LogParsingError:
+        except LogParsingError as exc:
             parsing_errors += 1
+            parsing_error_details.append(
+                {"line_number": lines_read, "raw_line": raw_line.rstrip("\n"), "error_message": str(exc)}
+            )
             logger.warning("Ligne %d de %s ignorée (parsing) : %r", lines_read, filename, raw_line[:120])
             continue
 
@@ -92,6 +103,7 @@ def import_log_file(session: Session, file: IO[bytes], filename: str) -> dict:
         "log_entries_created": log_entries_created,
         "log_entries_skipped_duplicate": log_entries_skipped_duplicate,
         "parsing_errors": parsing_errors,
+        "parsing_error_details": parsing_error_details,
         "flows_touched": len(flows_touched),
         "sources": sorted(sources_seen),
         "new_sources": sorted(new_sources),

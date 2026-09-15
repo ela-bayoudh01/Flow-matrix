@@ -10,7 +10,7 @@ import { invertedAction } from "../../api/types";
 import { useValidateFlow } from "../../hooks/useFlows";
 import { ActionOverrideDialog } from "./ActionOverrideDialog";
 import { FlowLogEntriesDrawer } from "./FlowLogEntriesDrawer";
-import { criticalityColor, validationStatusColor, describeAction, DIFF_STATUS_COLORS, DIFF_STATUS_LABELS } from "../../theme/colors";
+import { criticalityColor, validationStatusColor, describeAction, displayAxisLabel, DIFF_STATUS_COLORS, DIFF_STATUS_LABELS, STATUS_LABELS } from "../../theme/colors";
 import { appGridTheme } from "../../theme/agGridTheme";
 import { SimpleColumnFilter } from "../common/SimpleColumnFilter";
 
@@ -73,7 +73,7 @@ function ActionChip({ action, allowCount, blockCount }: { action: string | null;
 
 function CriticalityChip({ label }: { label: string | null }) {
   if (!label) return null;
-  return <Chip size="small" label={label} sx={{ backgroundColor: criticalityColor(label), color: "#fff" }} />;
+  return <Chip size="small" label={displayAxisLabel(label)} sx={{ backgroundColor: criticalityColor(label), color: "#fff" }} />;
 }
 
 // Lecture seule (Matrice Validée, 2026-09-09) : ce Flow est reconstruit depuis un FlowSnapshot
@@ -85,7 +85,7 @@ function ReadOnlyValidationCell({ status }: { status: string }) {
     <Chip
       size="small"
       variant="outlined"
-      label={status}
+      label={STATUS_LABELS[status] ?? status}
       sx={{ borderColor: validationStatusColor(status), color: validationStatusColor(status) }}
     />
   );
@@ -110,7 +110,7 @@ function ValidationCell({
   // Désactivés (pas masqués) : la ligne garde la même forme que les autres statuts de ce
   // même tableau -- un bouton qui apparaît/disparaît selon le statut serait lui-même une
   // source de confusion supplémentaire.
-  const disabledReason = "Disparu : ce flux n'a pas été revu depuis la dernière clôture de cycle -- aucune action requise.";
+  const disabledReason = "Disparu : ce flux n'a pas été revu depuis la dernière clôture de cycle,aucune action requise.";
 
   // Valider/Bloquer : toujours un clic simple et immédiat, jamais de fenêtre (décision de
   // conception actée le 2026-09-05, après un test réel où la détection de contradiction ne
@@ -122,7 +122,7 @@ function ValidationCell({
         <Chip
           size="small"
           variant="outlined"
-          label={flow.validation_status}
+          label={STATUS_LABELS[flow.validation_status] ?? flow.validation_status}
           sx={{ borderColor: validationStatusColor(flow.validation_status), color: validationStatusColor(flow.validation_status) }}
         />
       )}

@@ -8,7 +8,6 @@ import Stack from "@mui/material/Stack";
 import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
 import LinearProgress from "@mui/material/LinearProgress";
-import Chip from "@mui/material/Chip";
 import Divider from "@mui/material/Divider";
 import Table from "@mui/material/Table";
 import TableHead from "@mui/material/TableHead";
@@ -17,29 +16,33 @@ import TableRow from "@mui/material/TableRow";
 import TableCell from "@mui/material/TableCell";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutlined";
 import { FileDropZone } from "../components/import/FileDropZone";
+import { ImportErrorsDialog } from "../components/import/ImportErrorsDialog";
 import { useImportLogs, useImportHistory } from "../hooks/useImportLogs";
 import { useQualifyFlows } from "../hooks/useFlows";
-import { useRunRecommendations } from "../hooks/useRecommendations";
 import { TableSkeleton } from "../components/common/TableSkeleton";
 import { STATUS_COLORS } from "../theme/colors";
 
-// Étapes 1 (import) à 3 (recommandations) de docs/12-checklist-apres-import.md, enchaînées
-// dans cette page -- boutons dédiés affichés progressivement, jamais déclenchés
-// automatiquement (même principe que Recommandations/Propositions ACL : un clic explicite
-// par moteur). L'étape 4 (revue humaine) et 5 (Propositions ACL) ne peuvent pas être
-// enchaînées ici : elles dépendent d'une décision humaine sur des flux/findings précis,
-// pas d'un simple "suivant".
+// Étapes 1 (import) à 2 (qualification) de docs/12-checklist-apres-import.md, enchaînées dans
+// cette page -- bouton dédié affiché progressivement, jamais déclenché automatiquement (même
+// principe que Recommandations/Propositions ACL : un clic explicite par moteur). L'étape 3
+// (recommandations) retirée d'ici le 2026-09-12 (demande de l'encadrant, même mise en
+// sourdine que partout ailleurs, ce point d'entrée avait été oublié) -- voir le commentaire
+// juste avant la carte "Étape suivante : qualification" plus bas pour la restauration. Les
+// étapes 4 (revue humaine) et 5 (Propositions ACL) ne peuvent de toute façon pas être
+// enchaînées ici : elles dépendent d'une décision humaine sur des flux/findings précis, pas
+// d'un simple "suivant".
 export function ImportPage() {
   const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
-  const [showImportDetail, setShowImportDetail] = useState(false);
   const importLogs = useImportLogs();
   const qualifyFlows = useQualifyFlows();
-  const runRecommendations = useRunRecommendations();
   // Historique des imports (2026-09-11, demande de l'encadrant) -- INDÉPENDANT de l'état de
   // importLogs (la mutation d'upload) ci-dessus : c'est ce qui lui permet de rester visible
   // même après avoir navigué ailleurs et être revenu sur cette page (voir plus bas).
   const importHistory = useImportHistory();
+  // Détail des erreurs de parsing (2026-09-14, demande de l'encadrant) -- id de l'import
+  // dont on veut voir le détail, `null` = boîte de dialogue fermée. Voir ImportErrorsDialog.tsx.
+  const [errorsDialogImportLogId, setErrorsDialogImportLogId] = useState<number | null>(null);
 
   function handleFileSelected(selected: File) {
     setFile(selected);
@@ -48,10 +51,8 @@ export function ImportPage() {
 
   function reset() {
     setFile(null);
-    setShowImportDetail(false);
     importLogs.reset();
     qualifyFlows.reset();
-    runRecommendations.reset();
   }
 
   const uploading = importLogs.isPending && importLogs.uploadProgress !== null && importLogs.uploadProgress < 100;
@@ -98,9 +99,12 @@ export function ImportPage() {
       {importLogs.isSuccess && importLogs.data && (
         <Stack spacing={2} sx={{ maxWidth: 640 }}>
           {/* Simplifié (2026-09-09, demande de l'encadrant) : une confirmation simple pour
-              l'utilisateur final, jamais le détail chiffré par défaut -- ImportSummary
-              (backend) reste inchangé, toujours utile pour les tests/logs internes, le détail
-              complet reste consultable derrière "Voir le détail" juste en dessous. */}
+              l'utilisateur final, jamais le détail chiffré ici -- retiré le 2026-09-12
+              (demande de l'encadrant) : le détail complet (lignes lues, entrées créées,
+              doublons, erreurs, flux touchés, source(s)) est désormais uniquement dans
+              "Historique des imports" plus bas sur cette même page, pas dupliqué ici.
+              ImportSummary (backend) reste inchangé, toujours utile pour les tests/logs
+              internes. */}
           <Alert severity="success" icon={<CheckCircleOutlineIcon fontSize="inherit" />}>
             Import réussi :{importLogs.data.filename}
           </Alert>
@@ -110,38 +114,10 @@ export function ImportPage() {
               analysées), jamais masquée silencieusement. */}
           {importLogs.data.parsing_errors > 0 && (
             <Alert severity="warning">
-              {importLogs.data.parsing_errors} ligne(s) n'ont pas pu être analysée(s) -- voir le
-              détail ci-dessous.
+              {importLogs.data.parsing_errors} ligne(s) n'ont pas pu être analysée(s) -- cliquez
+              sur le nombre d'erreurs dans "Historique des imports" plus bas pour voir le détail
+              (ligne brute et raison exacte).
             </Alert>
-          )}
-
-          <Button size="small" onClick={() => setShowImportDetail((v) => !v)} sx={{ alignSelf: "flex-start" }}>
-            {showImportDetail ? "Masquer le détail" : "Voir le détail"}
-          </Button>
-          {showImportDetail && (
-            <Stack spacing={0.5}>
-              <Typography variant="body2">{importLogs.data.lines_read} ligne(s) lue(s)</Typography>
-              <Typography variant="body2">{importLogs.data.log_entries_created} entrée(s) créée(s)</Typography>
-              <Typography variant="body2">
-                {importLogs.data.log_entries_skipped_duplicate} doublon(s) ignoré(s)
-              </Typography>
-              <Typography variant="body2" sx={{ color: importLogs.data.parsing_errors > 0 ? STATUS_COLORS.serious : undefined }}>
-                {importLogs.data.parsing_errors} erreur(s) de parsing
-              </Typography>
-              <Typography variant="body2">{importLogs.data.flows_touched} flux touché(s)</Typography>
-              <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", mt: 0.5 }}>
-                <Typography variant="body2">Source(s) :</Typography>
-                {importLogs.data.sources.map((s) => (
-                  <Chip
-                    key={s}
-                    size="small"
-                    label={importLogs.data!.new_sources.includes(s) ? `${s} (nouvelle)` : s}
-                    color={importLogs.data!.new_sources.includes(s) ? "primary" : "default"}
-                    variant={importLogs.data!.new_sources.includes(s) ? "filled" : "outlined"}
-                  />
-                ))}
-              </Stack>
-            </Stack>
           )}
 
           <Card variant="outlined">
@@ -180,51 +156,17 @@ export function ImportPage() {
                     </Alert>
                   )}
 
-                  <Divider sx={{ my: 2 }} />
-
-                  <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
-                    Étape suivante : recommandations
-                  </Typography>
-
-                  {!runRecommendations.isSuccess && (
-                    <Button
-                      variant="contained"
-                      size="small"
-                      loading={runRecommendations.isPending}
-                      onClick={() => runRecommendations.mutate()}
-                    >
-                      Lancer les recommandations
-                    </Button>
-                  )}
-                  {runRecommendations.isError && (
-                    <Alert severity="error" sx={{ mt: 2 }}>
-                      {(runRecommendations.error as Error).message}
-                    </Alert>
-                  )}
-
-                  {/* {runRecommendations.isSuccess && runRecommendations.data && (
-                    <>
-                      <Alert severity="success">
-                        {runRecommendations.data.total_findings} recommandation(s) ({runRecommendations.data.created} créée(s),{" "}
-                        {runRecommendations.data.updated} mise(s) à jour).
-                      </Alert>
-
-                      <Divider sx={{ my: 2 }} />
-
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                        Étape suivante (checklist) : revue humaine -- Valider des flux (Table des flux) et Traiter des
-                        recommandations (Recommandations) -- avant de pouvoir lancer les Propositions ACL.
-                      </Typography>
-                      <Stack direction="row" spacing={1}>
-                        <Button size="small" variant="outlined" onClick={() => navigate("/flows")}>
-                          Aller à la Table des flux
-                        </Button>
-                        <Button size="small" variant="outlined" onClick={() => navigate("/recommendations")}>
-                          Aller aux Recommandations
-                        </Button>
-                      </Stack>
-                    </>
-                  )} */}
+                  {/* "Étape suivante : recommandations" retirée le 2026-09-12 (demande de
+                      l'encadrant) -- le Recommendation Engine est mis en sourdine partout
+                      ailleurs dans l'app (Sidebar.tsx, docs/perspectives.md) depuis le
+                      2026-09-03/04 ; ce bouton était resté un point d'entrée UI oublié malgré
+                      ça, même situation que le bouton ACL retiré de ValidationCyclePage.tsx le
+                      2026-09-10. AUCUN code/endpoint/modèle/test lié au Recommendation Engine
+                      supprimé -- hooks/useRecommendations.ts, Services/recommendation_engine.py,
+                      RecommendationsPage.tsx (route directe /recommendations) restent intacts,
+                      pour une réactivation immédiate si besoin : restaurer ici la Divider +
+                      Typography "Étape suivante : recommandations" + le bouton "Lancer les
+                      recommandations" (useRunRecommendations(), cf. historique git). */}
                 </>
               )}
             </CardContent>
@@ -280,7 +222,14 @@ export function ImportPage() {
                 <TableCell>{log.lines_read}</TableCell>
                 <TableCell>{log.log_entries_created}</TableCell>
                 <TableCell>{log.log_entries_skipped_duplicate}</TableCell>
-                <TableCell sx={{ color: log.parsing_errors > 0 ? STATUS_COLORS.serious : undefined }}>
+                <TableCell
+                  sx={{
+                    color: log.parsing_errors > 0 ? STATUS_COLORS.serious : undefined,
+                    cursor: log.parsing_errors > 0 ? "pointer" : undefined,
+                    textDecoration: log.parsing_errors > 0 ? "underline" : undefined,
+                  }}
+                  onClick={log.parsing_errors > 0 ? () => setErrorsDialogImportLogId(log.id) : undefined}
+                >
                   {log.parsing_errors}
                 </TableCell>
                 <TableCell>{log.flows_touched}</TableCell>
@@ -289,6 +238,12 @@ export function ImportPage() {
           </TableBody>
         </Table>
       )}
+
+      <ImportErrorsDialog
+        importLogId={errorsDialogImportLogId}
+        filename={importHistory.data?.items.find((log) => log.id === errorsDialogImportLogId)?.filename}
+        onClose={() => setErrorsDialogImportLogId(null)}
+      />
     </Box>
   );
 }

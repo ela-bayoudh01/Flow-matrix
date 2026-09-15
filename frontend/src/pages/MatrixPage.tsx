@@ -17,6 +17,8 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { useMatrix } from "../hooks/useMatrix";
 import { useValidationCycleCellDiff, useValidatedMatrix } from "../hooks/useValidationCycle";
 import { useSourceOptions } from "../hooks/useSourceOptions";
+import { useSourceCoverageFor } from "../hooks/useSourceCoverage";
+import { SourceCoverageNote } from "../components/common/SourceCoverageNote";
 import { MatrixGrid, type ColorMode } from "../components/matrix/MatrixGrid";
 import { MatrixLegend } from "../components/matrix/MatrixLegend";
 import { FlowDetailDrawer } from "../components/flows/FlowDetailDrawer";
@@ -107,6 +109,12 @@ export function MatrixPage() {
     if (view === "validee" && VALIDATED_EXCLUDED_DIMENSIONS.has(dimension)) setDimension(DEFAULT_MATRIX_DIMENSION);
   }, [view, dimension]);
 
+  // Indications temporelles par source (2026-09-12, demande de l'encadrant après démo) --
+  // undefined tant qu'aucune source précise n'est choisie (jamais affiché pour "Toutes les
+  // sources", ambigu), cf. SourceCoverageNote.tsx.
+  const reelleCoverage = useSourceCoverageFor(filters.source);
+  const valideeCoverage = useSourceCoverageFor(validatedSource || undefined);
+
   const { data, isLoading, isError, error } = useMatrix(dimension, filters);
   const { data: diffData } = useValidationCycleCellDiff(dimension, filters, view === "reelle" && colorMode === "diff" && !!filters.source);
   const { data: validatedData, isLoading: isValidatedLoading, isError: isValidatedError, error: validatedError } = useValidatedMatrix(
@@ -129,9 +137,38 @@ export function MatrixPage() {
 
       {view === "reelle" && (
         <>
+          {/* Sélecteur "Source (firewall)" (2026-09-12, bug réel corrigé) -- identique à celui
+              de l'onglet Matrice Validée juste plus bas : absent jusqu'ici sur cet onglet alors
+              que "Colorer par écart" exige justement une source (tooltip du bouton désactivé
+              ci-dessous) -- rien n'indiquait où agir. Pilote directement filters.source (même
+              clé que le champ libre "Source (site)" de FilterBar, masqué ci-dessous via
+              hideSourceFilter pour éviter deux contrôles concurrents sur le même filtre). */}
+          <Stack direction="row" spacing={2} sx={{ alignItems: "center", mb: 1, flexWrap: "wrap" }}>
+            <TextField
+              select
+              size="small"
+              label="Source (firewall)"
+              value={filters.source ?? ""}
+              onChange={(e) => {
+                setFilters({ ...filters, source: e.target.value || undefined });
+                setSelectedCell(null);
+              }}
+              sx={{ minWidth: 220 }}
+            >
+              <MenuItem value="">Toutes les sources</MenuItem>
+              {sourceOptions.map((s) => (
+                <MenuItem key={s} value={s}>
+                  {s}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Stack>
+
+          <SourceCoverageNote coverage={reelleCoverage} />
+
           <MatrixTypeSelector dimension={dimension} onChange={(d) => { setDimension(d); setSelectedCell(null); }} />
 
-          <FilterBar value={filters} onChange={setFilters} />
+          <FilterBar value={filters} onChange={setFilters} hideSourceFilter />
 
           <ToggleButtonGroup value={colorMode} exclusive onChange={(_, value: ColorMode | null) => value && setColorMode(value)} size="small" sx={{ mb: 2 }}>
             <ToggleButton value="volume">Colorer par nombre de flux</ToggleButton>
@@ -165,11 +202,7 @@ export function MatrixPage() {
               flow_count représente les flux ACTIFS ce cycle, pas tout l'historique jamais
               connu -- celui-ci reste consultable, lui, dans la Table des flux (comportement
               lifetime inchangé). */}
-          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
-            Cette matrice ne montre que les flux actifs dans le cycle courant (retouchés depuis
-            la dernière clôture, ou jamais clôturés pour l'instant) -- pas l'historique complet
-            jamais connu, toujours consultable dans la Table des flux.
-          </Typography>
+         
 
           {isLoading && <TableSkeleton />}
           {isError && <Alert severity="error">{(error as Error).message}</Alert>}
@@ -196,6 +229,7 @@ export function MatrixPage() {
             rowValue={selectedCell?.row}
             colValue={selectedCell?.col}
             extraFilters={filters}
+            showDiff={colorMode === "diff"}
           />
         </>
       )}
@@ -225,6 +259,8 @@ export function MatrixPage() {
             </Button>
           </Stack>
 
+          <SourceCoverageNote coverage={valideeCoverage} />
+
           <MatrixTypeSelector
             dimension={dimension}
             onChange={(d) => { setDimension(d); setSelectedValidatedCell(null); }}
@@ -246,7 +282,7 @@ export function MatrixPage() {
           {validatedSource && validatedData && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               {validatedData.cycle
-                ? `Matrice Validée de ${validatedSource} : instantané figé le ${new Date(validatedData.cycle.closed_at).toLocaleString("fr-FR")}${validatedData.cycle.closed_by ? ` par ${validatedData.cycle.closed_by}` : ""} -- ${validatedData.cycle.flow_count} flux. Sert de référence pour le prochain log de cette source.`
+                ? `Matrice Validée de ${validatedSource} : instantané figé le ${new Date(validatedData.cycle.closed_at).toLocaleString("fr-FR")}${validatedData.cycle.closed_by ? ` par ${validatedData.cycle.closed_by}` : ""} : ${validatedData.cycle.flow_count} flux.`
                 : `Aucune Matrice Validée pour l'instant sur ${validatedSource} ,clôture un premier cycle depuis la page Cycle de validation.`}
             </Typography>
           )}

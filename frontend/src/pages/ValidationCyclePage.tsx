@@ -38,7 +38,7 @@ import { StatTile } from "../components/flows/FlowsSummaryBar";
 import { TableSkeleton } from "../components/common/TableSkeleton";
 import { StatCardsSkeleton } from "../components/common/StatCardsSkeleton";
 import { api } from "../api/client";
-import { DIFF_STATUS_COLORS, DIFF_STATUS_LABELS, STATUS_COLORS } from "../theme/colors";
+import { DIFF_STATUS_COLORS, DIFF_STATUS_LABELS, STATUS_COLORS, ACTION_LABELS } from "../theme/colors";
 import { ecartsATraiter, type DiffStatus, type FlowFilterValues } from "../api/types";
 import { PREFIX_OPTIONS, DEFAULT_PREFIX_LENGTH } from "../constants/subnetPrefixes";
 
@@ -202,7 +202,7 @@ export function ValidationCyclePage() {
       {source && (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           {cycle
-            ? `Dernière baseline (Matrice Validée) de ${source} : ${new Date(cycle.closed_at).toLocaleString("fr-FR")}${cycle.closed_by ? ` par ${cycle.closed_by}` : ""} (${cycle.flow_count} flux figés.)`
+            ? `Dernière matrice Validée de ${source} : ${new Date(cycle.closed_at).toLocaleString("fr-FR")}${cycle.closed_by ? ` par ${cycle.closed_by}` : ""} (${cycle.flow_count} flux figés.)`
             : `Aucune baseline pour l'instant sur ${source} tous ses flux sont affichés comme "nouveau" (premier cycle).`}
         </Typography>
       )}
@@ -289,8 +289,7 @@ export function ValidationCyclePage() {
             </Button>
           }
         >
-          {unqualifiedCount} flux n'ont pas encore été qualifiés -- lancer la qualification pour
-          une criticité à jour.
+          {unqualifiedCount} flux n'ont pas encore été qualifiés.
         </Alert>
       )}
       {qualifyFlows.isSuccess && (
@@ -520,10 +519,10 @@ export function ValidationCyclePage() {
                     <TableCell>{p.src_cidr}</TableCell>
                     <TableCell>{p.destination}</TableCell>
                     <TableCell>
-                      {p.dst_port ?? "any"} / {p.protocol ?? "any"}
+                      {p.dst_port ?? "tout port"} / {p.protocol ?? "tout protocole"}
                     </TableCell>
                     <TableCell sx={{ color: p.action === "Block" ? STATUS_COLORS.critical : STATUS_COLORS.good, fontWeight: 600 }}>
-                      {p.action}
+                      {ACTION_LABELS[p.action] ?? p.action}
                     </TableCell>
                     <TableCell sx={{ maxWidth: 220 }}>{p.justification}</TableCell>
                     <TableCell>{p.decided_by ?? "—"}</TableCell>

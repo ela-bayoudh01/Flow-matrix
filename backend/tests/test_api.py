@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Flow, ImportLog, LogEntry
+from app.models import Flow, FlowValidationHistory, ImportLog, LogEntry
 
 from .sample_logs import ALLOW_HTTPS_LINE, BLOCK_SMB_LINE, SITE_B_ALLOW_LINE
 
@@ -57,6 +57,35 @@ def client():
     app.dependency_overrides.clear()
 
 
+def test_sources_endpoint_lists_the_seeded_source_regardless_of_cycle_activity(client):
+    # 2026-09-12, bug réel corrigé, signalé juste après une clôture de cycle : le sélecteur
+    # "Source (firewall)" (useSourceOptions.ts) dérivait auparavant de /api/matrix, vidé à
+    # tort dès que cycle_occurrence_count == 0 pour toute la source (voir flows_query.
+    # list_known_sources). Réinitialise le Flow seedé dans cet état précis pour le prouver.
+    with Session(client.engine) as session:
+        flow = session.query(Flow).one()
+        flow.cycle_occurrence_count = 0
+        flow.cycle_dominant_action = None
+        session.commit()
+
+    response = client.get("/api/sources")
+
+    assert response.status_code == 200
+    assert response.json() == {"sources": ["SITE-A-FWTEST"]}
+
+
+def test_sources_coverage_endpoint_returns_period_and_flow_count(client):
+    response = client.get("/api/sources/coverage")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["source"] == "SITE-A-FWTEST"
+    assert item["flow_count"] == 1
+    assert item["last_imported_at"] is None  # aucun LogEntry seedé par la fixture client
+
+
 def test_matrix_endpoint_returns_zone_cells_by_default(client):
     response = client.get("/api/matrix")
 
@@ -101,6 +130,31 @@ def test_flows_endpoint_supports_cell_drill_down_filters(client):
     assert body["total_count"] == 1
     assert body["items"][0]["src_ip"] == "10.10.1.1"
     assert body["summary"]["total_flows"] == 1
+
+
+def test_matrix_cell_drill_down_matches_the_cell_it_was_clicked_from(client):
+    # 2026-09-12, bug réel corrigé, signalé en testant le correctif du Matrix Engine : la
+    # cellule de la Matrice Réelle (/api/matrix) et son drill-down (/api/flows?dimension=...)
+    # doivent toujours montrer le même total -- sinon cliquer sur "4" ouvre un tiroir qui en
+    # liste 6464 comme observé en réel.
+    with Session(client.engine) as session:
+        session.add(
+            Flow(
+                source="SITE-A-FWTEST", src_ip="10.10.1.99", dst_ip="203.0.113.99", dst_port=8080,
+                protocol="tcp", ingress_zone="Users_Zone", egress_zone="Internet_Zone",
+                occurrence_count=999, dominant_action="Allow",
+                cycle_occurrence_count=0,  # inactif ce cycle -- exclu de la cellule ET du drill-down
+            )
+        )
+        session.commit()
+
+    matrix = client.get("/api/matrix", params={"dimension": "zone"}).json()
+    cell = next(c for c in matrix["cells"] if c["row"] == "Users_Zone" and c["col"] == "Internet_Zone")
+
+    drilldown = client.get("/api/flows", params={"dimension": "zone", "row_value": "Users_Zone", "col_value": "Internet_Zone"}).json()
+
+    assert cell["flow_count"] == drilldown["total_count"] == 1  # le flow seedé (cycle_occurrence_count=3), pas le nouveau (0)
+    assert "10.10.1.99" not in {f["src_ip"] for f in drilldown["items"]}
 
 
 def test_flow_log_entries_endpoint_lists_underlying_connections(client):
@@ -292,8 +346,8 @@ def test_validate_flow_records_a_history_entry_visible_via_the_api(client):
     assert body["total_count"] == 2
     # ordre : le plus récent en premier
     latest, first = body["items"]
-    assert (latest["old_status"], latest["new_status"], latest["validated_by"]) == ("approved", "blocked", "Encadrant")
-    assert (first["old_status"], first["new_status"], first["validated_by"]) == ("pending", "approved", "Loulou")
+    assert (latest["old_status"], latest["new_status"], latest["decided_by"]) == ("approved", "blocked", "Encadrant")
+    assert (first["old_status"], first["new_status"], first["decided_by"]) == ("pending", "approved", "Loulou")
     # "Changer la règle" (Allow -> Block) : justification/action-avant/action-décidée figées ;
     # la 1ère entrée (Valider classique) n'en porte aucune.
     assert latest["justification"] == "Trafic suspect confirmé."
@@ -316,6 +370,217 @@ def test_validation_history_supports_keyword_search(client):
     assert by_ip.json()["total_count"] == 1
     assert by_validator.json()["total_count"] == 1
     assert no_match.json()["total_count"] == 0
+
+
+def test_validation_history_endpoint_filters_by_source(client):
+    # 2026-09-12, demande de l'encadrant -- même sélecteur "Source (firewall)" que sur les
+    # autres pages.
+    with Session(client.engine) as session:
+        session.add(
+            Flow(
+                source="SITE-B-FWTEST", src_ip="10.20.1.1", dst_ip="203.0.113.20", dst_port=443,
+                protocol="tcp", occurrence_count=1, dominant_action="Allow",
+            )
+        )
+        session.commit()
+    flow_a_id = client.get("/api/flows", params={"source": "SITE-A-FWTEST"}).json()["items"][0]["id"]
+    flow_b_id = client.get("/api/flows", params={"source": "SITE-B-FWTEST"}).json()["items"][0]["id"]
+    client.patch(f"/api/flows/{flow_a_id}/validation", json={"status": "approved"})
+    client.patch(f"/api/flows/{flow_b_id}/validation", json={"status": "blocked"})
+
+    response = client.get("/api/validation-history", params={"source": "SITE-B-FWTEST"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["items"][0]["src_ip"] == "10.20.1.1"
+
+
+def test_validation_history_endpoint_filters_by_change_type(client):
+    # "Changer la règle" (justification) vs Valider/Bloquer classique -- même distinction déjà
+    # utilisée par la colonne "Fiche" (bouton affiché seulement si justification non nulle).
+    flow_id = client.get("/api/flows").json()["items"][0]["id"]
+    client.patch(f"/api/flows/{flow_id}/validation", json={"status": "approved"})
+    client.patch(
+        f"/api/flows/{flow_id}/change-rule",
+        json={"target_action": "Block", "justification": "Test."},
+    )
+
+    rule_changes = client.get("/api/validation-history", params={"change_type": "rule_change"})
+    classic = client.get("/api/validation-history", params={"change_type": "classic"})
+
+    assert rule_changes.json()["total_count"] == 1
+    assert rule_changes.json()["items"][0]["justification"] == "Test."
+    assert classic.json()["total_count"] == 1
+    assert classic.json()["items"][0]["justification"] is None
+
+
+def test_validation_history_endpoint_rejects_unknown_change_type(client):
+    response = client.get("/api/validation-history", params={"change_type": "nope"})
+
+    assert response.status_code == 400
+
+
+def test_validation_history_endpoint_filters_by_date_range(client):
+    flow_id = client.get("/api/flows").json()["items"][0]["id"]
+    client.patch(f"/api/flows/{flow_id}/validation", json={"status": "approved"})
+    history_id = client.get("/api/validation-history").json()["items"][0]["id"]
+
+    with Session(client.engine) as session:
+        entry = session.get(FlowValidationHistory, history_id)
+        entry.created_at = datetime(2026, 9, 5, 10, 0)
+        session.commit()
+
+    in_range = client.get("/api/validation-history", params={"date_from": "2026-09-01", "date_to": "2026-09-10"})
+    before_range = client.get("/api/validation-history", params={"date_from": "2026-09-06"})
+    # date_to inclut toute la journée choisie (pas seulement minuit) -- l'entrée est à 10h.
+    same_day_inclusive = client.get("/api/validation-history", params={"date_to": "2026-09-05"})
+
+    assert in_range.json()["total_count"] == 1
+    assert before_range.json()["total_count"] == 0
+    assert same_day_inclusive.json()["total_count"] == 1
+
+
+# --- Fusion avec NetworkPolicy (2026-09-13, demande de l'encadrant) -----------------------
+
+
+def test_validation_history_endpoint_includes_network_policies(client):
+    flow_id = client.get("/api/flows").json()["items"][0]["id"]
+    client.patch(f"/api/flows/{flow_id}/validation", json={"status": "approved"})
+    client.post(
+        "/api/network-policies",
+        json={
+            "source": "SITE-A-FWTEST", "src_cidr": "10.10.1.0/24", "destination": "Internet_Zone",
+            "action": "Block", "justification": "Test fusion.", "decided_by": "Loulou",
+        },
+    )
+
+    response = client.get("/api/validation-history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 2
+    entry_types = {item["entry_type"] for item in body["items"]}
+    assert entry_types == {"flow", "network_policy"}
+    policy_entry = next(item for item in body["items"] if item["entry_type"] == "network_policy")
+    assert policy_entry["src_cidr"] == "10.10.1.0/24"
+    assert policy_entry["destination"] == "Internet_Zone"
+    assert policy_entry["action"] == "Block"
+    assert policy_entry["decided_by"] == "Loulou"
+    assert policy_entry["justification"] == "Test fusion."
+
+
+def test_validation_history_endpoint_sorts_merged_entries_by_date(client):
+    flow_id = client.get("/api/flows").json()["items"][0]["id"]
+    client.patch(f"/api/flows/{flow_id}/validation", json={"status": "approved"})  # entrée flux, la plus ancienne
+    client.post(
+        "/api/network-policies",
+        json={"src_cidr": "10.10.1.0/24", "destination": "Internet_Zone", "action": "Block", "justification": "Plus récente."},
+    )  # entrée politique, forcément créée après
+
+    response = client.get("/api/validation-history")
+
+    items = response.json()["items"]
+    assert [item["entry_type"] for item in items] == ["network_policy", "flow"]  # la plus récente en premier
+
+
+def test_validation_history_endpoint_filters_by_entry_type(client):
+    flow_id = client.get("/api/flows").json()["items"][0]["id"]
+    client.patch(f"/api/flows/{flow_id}/validation", json={"status": "approved"})
+    client.post(
+        "/api/network-policies",
+        json={"src_cidr": "10.10.1.0/24", "destination": "Internet_Zone", "action": "Block", "justification": "Test."},
+    )
+
+    flows_only = client.get("/api/validation-history", params={"entry_type": "flow"})
+    policies_only = client.get("/api/validation-history", params={"entry_type": "network_policy"})
+
+    assert flows_only.json()["total_count"] == 1
+    assert flows_only.json()["items"][0]["entry_type"] == "flow"
+    assert policies_only.json()["total_count"] == 1
+    assert policies_only.json()["items"][0]["entry_type"] == "network_policy"
+
+
+def test_validation_history_endpoint_rejects_unknown_entry_type(client):
+    response = client.get("/api/validation-history", params={"entry_type": "nope"})
+
+    assert response.status_code == 400
+
+
+def test_validation_history_endpoint_change_type_excludes_network_policies(client):
+    # change_type est un concept propre au flux (rule_change/classic) -- une politique de
+    # sous-réseau n'est ni l'un ni l'autre.
+    flow_id = client.get("/api/flows").json()["items"][0]["id"]
+    client.patch(f"/api/flows/{flow_id}/validation", json={"status": "approved"})
+    client.post(
+        "/api/network-policies",
+        json={"src_cidr": "10.10.1.0/24", "destination": "Internet_Zone", "action": "Block", "justification": "Test."},
+    )
+
+    response = client.get("/api/validation-history", params={"change_type": "classic"})
+
+    assert response.json()["total_count"] == 1
+    assert response.json()["items"][0]["entry_type"] == "flow"
+
+
+def test_validation_history_endpoint_flow_id_filter_excludes_network_policies(client):
+    flow_id = client.get("/api/flows").json()["items"][0]["id"]
+    client.patch(f"/api/flows/{flow_id}/validation", json={"status": "approved"})
+    client.post(
+        "/api/network-policies",
+        json={"src_cidr": "10.10.1.0/24", "destination": "Internet_Zone", "action": "Block", "justification": "Test."},
+    )
+
+    response = client.get("/api/validation-history", params={"flow_id": flow_id})
+
+    assert response.json()["total_count"] == 1
+    assert response.json()["items"][0]["entry_type"] == "flow"
+
+
+def test_validation_history_endpoint_source_filter_applies_to_network_policies(client):
+    client.post(
+        "/api/network-policies",
+        json={
+            "source": "SITE-B-FWTEST", "src_cidr": "10.20.1.0/24", "destination": "Internet_Zone",
+            "action": "Allow", "justification": "Autre source.",
+        },
+    )
+
+    matching = client.get("/api/validation-history", params={"source": "SITE-B-FWTEST", "entry_type": "network_policy"})
+    non_matching = client.get("/api/validation-history", params={"source": "SITE-A-FWTEST", "entry_type": "network_policy"})
+
+    assert matching.json()["total_count"] == 1
+    assert non_matching.json()["total_count"] == 0
+
+
+def test_validation_history_endpoint_keyword_search_matches_network_policy_fields(client):
+    client.post(
+        "/api/network-policies",
+        json={"src_cidr": "10.77.5.0/24", "destination": "DMZ_Zone", "action": "Block", "justification": "Test recherche."},
+    )
+
+    by_cidr = client.get("/api/validation-history", params={"q": "10.77.5.0"})
+    no_match = client.get("/api/validation-history", params={"q": "nope-nothing-matches"})
+
+    assert by_cidr.json()["total_count"] == 1
+    assert by_cidr.json()["items"][0]["entry_type"] == "network_policy"
+    assert no_match.json()["total_count"] == 0
+
+
+def test_network_policy_fiche_endpoint_reachable_from_a_history_entry(client):
+    # Le lien "Télécharger la fiche" d'une ligne "Sous-réseau" pointe vers
+    # /api/network-policies/{id}/fiche.pdf, pas /api/validation-history/{id}/fiche.pdf --
+    # confirme que l'id renvoyé dans l'entrée d'historique est bien exploitable tel quel.
+    client.post(
+        "/api/network-policies",
+        json={"src_cidr": "10.10.1.0/24", "destination": "Internet_Zone", "action": "Block", "justification": "Test."},
+    )
+    policy_entry = client.get("/api/validation-history", params={"entry_type": "network_policy"}).json()["items"][0]
+
+    response = client.get(f"/api/network-policies/{policy_entry['id']}/fiche.pdf")
+
+    assert response.status_code == 200
+    assert response.content.startswith(b"%PDF")
 
 
 def test_run_qualification_endpoint_computes_criticality_for_unqualified_flows(client):
@@ -965,6 +1230,65 @@ def test_cycle_report_endpoint_returns_pdf_even_when_no_decisions_made(client):
     assert response.content.startswith(b"%PDF")
 
 
+def test_cycle_report_endpoint_includes_network_policies_decided_during_the_cycle(client):
+    # Rapport de clôture (2026-09-14, demande de l'encadrant) -- une politique de sous-réseau
+    # créée pendant le cycle doit désormais faire grossir le PDF (nouvelle section), jamais
+    # rester absente comme avant ce correctif. Le contenu texte réel a été vérifié manuellement
+    # via pypdf (pas une dépendance du projet, cf. requirements.txt) : ici on vérifie ce que le
+    # reste de la suite vérifie déjà pour les autres sections (statut, type, validité du PDF),
+    # plus un signal de contenu dépendance-libre (taille strictement supérieure au cas vide).
+    baseline_cycle = client.post("/api/validation-cycles/close", params={"source": "SITE-A-FWTEST"}).json()
+    baseline_response = client.get(f"/api/validation-cycles/{baseline_cycle['id']}/report.pdf")
+
+    create = client.post(
+        "/api/network-policies",
+        json={
+            "source": "SITE-A-FWTEST",
+            "src_cidr": "10.10.2.0/24",
+            "destination": "DMZ_Zone",
+            "protocol": "tcp",
+            "dst_port": 443,
+            "action": "Block",
+            "justification": "Regroupement de test pour le rapport de cycle.",
+            "decided_by": "Loulou",
+        },
+    )
+    assert create.status_code == 200
+
+    cycle = client.post("/api/validation-cycles/close", params={"source": "SITE-A-FWTEST"}).json()
+    response = client.get(f"/api/validation-cycles/{cycle['id']}/report.pdf")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF")
+    assert len(response.content) > len(baseline_response.content)
+
+
+def test_cycle_report_endpoint_omits_network_policy_section_when_none_decided(client):
+    # "ne pas afficher la section" si aucune politique décidée pendant ce cycle précis --
+    # une politique décidée AVANT ce cycle (donc déjà couverte par un cycle précédent) ne doit
+    # pas réapparaître dans un rapport ultérieur.
+    client.post("/api/validation-cycles/close", params={"source": "SITE-A-FWTEST"}).json()
+    client.post(
+        "/api/network-policies",
+        json={
+            "source": "SITE-A-FWTEST",
+            "src_cidr": "10.10.3.0/24",
+            "destination": "Internet_Zone",
+            "action": "Allow",
+            "justification": "Politique déjà couverte par le cycle précédent.",
+        },
+    )
+    older_cycle = client.post("/api/validation-cycles/close", params={"source": "SITE-A-FWTEST"}).json()
+    older_response = client.get(f"/api/validation-cycles/{older_cycle['id']}/report.pdf")
+
+    newer_cycle = client.post("/api/validation-cycles/close", params={"source": "SITE-A-FWTEST"}).json()
+    newer_response = client.get(f"/api/validation-cycles/{newer_cycle['id']}/report.pdf")
+
+    assert newer_response.status_code == 200
+    assert len(newer_response.content) < len(older_response.content)
+
+
 def test_cycle_report_endpoint_404_on_unknown_cycle(client):
     response = client.get("/api/validation-cycles/999999/report.pdf")
 
@@ -1266,6 +1590,31 @@ def test_validation_cycle_subnet_diff_endpoint_unknown_source_returns_empty_item
     assert response.json()["items"] == []
 
 
+def test_validation_cycle_diff_endpoint_respects_a_matrix_cell_filter(client):
+    # 2026-09-12, demande de l'encadrant -- colonne "Écart" du tiroir de détail d'une cellule
+    # de la Matrice Réelle en mode "Colorer par écart" (FlowDetailDrawer.tsx).
+    with Session(client.engine) as session:
+        session.add(
+            Flow(
+                source="SITE-A-FWTEST", src_ip="10.10.1.50", dst_ip="203.0.113.50", dst_port=445,
+                protocol="tcp", ingress_zone="DMZ_Zone", egress_zone="OPS_Zone",
+                occurrence_count=1, dominant_action="Allow", cycle_occurrence_count=1, cycle_dominant_action="Allow",
+            )
+        )
+        session.commit()
+
+    response = client.get(
+        "/api/validation-cycles/diff",
+        params={"dimension": "zone", "row_value": "Users_Zone", "col_value": "Internet_Zone"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1  # le flow seedé (Users_Zone -> Internet_Zone), pas celui de DMZ_Zone/OPS_Zone
+    assert body["items"][0]["flow"]["src_ip"] == "10.10.1.1"
+    assert body["items"][0]["diff_status"] == "nouveau"
+
+
 # --- Historique des imports (2026-09-11, demande de l'encadrant) ---------------------------
 
 
@@ -1303,3 +1652,35 @@ def test_import_logs_endpoint_empty_returns_empty_list(client):
 
     assert response.status_code == 200
     assert response.json() == {"items": [], "total_count": 0}
+
+
+def test_import_log_errors_endpoint_returns_the_detail(client):
+    # 2026-09-14, demande de l'encadrant -- clic sur le nombre d'erreurs de la page Import.
+    content = (ALLOW_HTTPS_LINE + "\nligne invalide\n").encode("utf-8")
+    client.post("/api/logs/import", files={"file": ("with_error.log", content, "text/plain")})
+    import_log_id = client.get("/api/import-logs").json()["items"][0]["id"]
+
+    response = client.get(f"/api/import-logs/{import_log_id}/errors")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["line_number"] == 2
+    assert body["items"][0]["raw_line"] == "ligne invalide"
+    assert "non reconnu" in body["items"][0]["error_message"]
+
+
+def test_import_log_errors_endpoint_empty_when_no_error(client):
+    client.post("/api/logs/import", files={"file": ("clean.log", ALLOW_HTTPS_LINE.encode("utf-8"), "text/plain")})
+    import_log_id = client.get("/api/import-logs").json()["items"][0]["id"]
+
+    response = client.get(f"/api/import-logs/{import_log_id}/errors")
+
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
+
+
+def test_import_log_errors_endpoint_404_on_unknown_import_log(client):
+    response = client.get("/api/import-logs/999999/errors")
+
+    assert response.status_code == 404

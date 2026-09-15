@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.database import Base
-from app.import_log import list_import_logs, record_import
+from app.import_log import list_import_log_errors, list_import_logs, record_import
 from app.ingestion import import_log_file
 from app.models import ImportLog
 
@@ -77,3 +77,49 @@ def test_list_import_logs_empty_returns_empty_list(session):
     result = list_import_logs(session)
 
     assert result == {"items": [], "total_count": 0}
+
+
+# --- Détail des erreurs de parsing (2026-09-14, demande de l'encadrant) --------------------
+
+
+def test_record_import_persists_parsing_error_details(session):
+    summary = import_log_file(session, _file_of(ALLOW_HTTPS_LINE, "ligne invalide"), "test.log")
+
+    log = record_import(session, summary)
+
+    errors = list_import_log_errors(session, log.id)
+    assert len(errors) == 1
+    assert errors[0].line_number == 2
+    assert errors[0].raw_line == "ligne invalide"
+    assert "non reconnu" in errors[0].error_message
+
+
+def test_list_import_log_errors_ordered_by_line_number(session):
+    summary = import_log_file(session, _file_of("mauvaise ligne 1", ALLOW_HTTPS_LINE, "mauvaise ligne 3"), "test.log")
+    log = record_import(session, summary)
+
+    errors = list_import_log_errors(session, log.id)
+
+    assert [e.line_number for e in errors] == [1, 3]
+    assert [e.raw_line for e in errors] == ["mauvaise ligne 1", "mauvaise ligne 3"]
+
+
+def test_list_import_log_errors_scoped_to_its_own_import(session):
+    # Les erreurs d'un import ne doivent jamais apparaître dans le détail d'un autre.
+    s1 = import_log_file(session, _file_of("erreur import 1"), "first.log")
+    log1 = record_import(session, s1)
+    s2 = import_log_file(session, _file_of("erreur import 2"), "second.log")
+    log2 = record_import(session, s2)
+
+    errors1 = list_import_log_errors(session, log1.id)
+    errors2 = list_import_log_errors(session, log2.id)
+
+    assert [e.raw_line for e in errors1] == ["erreur import 1"]
+    assert [e.raw_line for e in errors2] == ["erreur import 2"]
+
+
+def test_list_import_log_errors_empty_when_no_error(session):
+    summary = import_log_file(session, _file_of(ALLOW_HTTPS_LINE), "test.log")
+    log = record_import(session, summary)
+
+    assert list_import_log_errors(session, log.id) == []

@@ -42,3 +42,14 @@ export function useImportHistory(limit = 50) {
     queryFn: () => api.getImportLogs({ limit }),
   });
 }
+
+// Détail des lignes en échec d'un import précis (2026-09-14, demande de l'encadrant) --
+// n'interroge le backend que quand la boîte de dialogue est réellement ouverte (`enabled`),
+// pas à chaque rendu de la ligne du tableau (voir ImportErrorsDialog.tsx).
+export function useImportLogErrors(importLogId: number | null) {
+  return useQuery({
+    queryKey: ["import-log-errors", importLogId],
+    queryFn: () => api.getImportLogErrors(importLogId as number),
+    enabled: importLogId !== null,
+  });
+}

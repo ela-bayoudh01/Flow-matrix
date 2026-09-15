@@ -3,7 +3,7 @@ import { AllCommunityModule, ModuleRegistry, type ColDef } from "ag-grid-communi
 import { useMemo } from "react";
 import Chip from "@mui/material/Chip";
 import type { AclProposalOut } from "../../api/types";
-import { INTENT_LABELS, INTENT_COLORS, validationStatusColor } from "../../theme/colors";
+import { INTENT_LABELS, INTENT_COLORS, STATUS_LABELS, validationStatusColor } from "../../theme/colors";
 import { appGridTheme } from "../../theme/agGridTheme";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -20,7 +20,7 @@ function IntentChip({ intent }: { intent: string }) {
 
 function StatusChip({ status }: { status: string }) {
   return (
-    <Chip size="small" variant="outlined" label={status} sx={{ borderColor: validationStatusColor(status), color: validationStatusColor(status) }} />
+    <Chip size="small" variant="outlined" label={STATUS_LABELS[status] ?? status} sx={{ borderColor: validationStatusColor(status), color: validationStatusColor(status) }} />
   );
 }
 

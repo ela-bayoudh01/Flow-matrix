@@ -12,6 +12,10 @@ import Alert from "@mui/material/Alert";
 import { useCreateManualAclProposal } from "../../hooks/useAclProposals";
 
 const ACTION_OPTIONS = ["Allow", "Block", "Remove"];
+// Verbe à l'infinitif (choix d'une action, pas l'affichage d'un état déjà décidé) -- propre à
+// ce formulaire ("Remove" n'existe nulle part ailleurs dans l'app), jamais ACTION_LABELS de
+// theme/colors.ts (participe passé "Autorisé"/"Bloqué", un sens différent).
+const ACTION_OPTION_LABELS: Record<string, string> = { Allow: "Autoriser", Block: "Bloquer", Remove: "Supprimer" };
 
 interface ManualAclProposalFormProps {
   open: boolean;
@@ -141,7 +145,7 @@ export function ManualAclProposalForm({ open, onClose }: ManualAclProposalFormPr
           >
             {ACTION_OPTIONS.map((a) => (
               <MenuItem key={a} value={a}>
-                {a}
+                {ACTION_OPTION_LABELS[a] ?? a}
               </MenuItem>
             ))}
           </TextField>

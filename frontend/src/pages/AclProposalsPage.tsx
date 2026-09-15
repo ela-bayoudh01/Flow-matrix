@@ -9,7 +9,7 @@ import Button from "@mui/material/Button";
 import Alert from "@mui/material/Alert";
 import { useAclProposals, useRunAclProposals } from "../hooks/useAclProposals";
 import { AclProposalsTable } from "../components/acl-proposals/AclProposalsTable";
-import { INTENT_LABELS } from "../theme/colors";
+import { INTENT_LABELS, STATUS_LABELS } from "../theme/colors";
 import { AclProposalsLegend } from "../components/acl-proposals/AclProposalsLegend";
 import { AclProposalDetailDrawer } from "../components/acl-proposals/AclProposalDetailDrawer";
 import { ManualAclProposalForm } from "../components/acl-proposals/ManualAclProposalForm";
@@ -62,7 +62,7 @@ export function AclProposalsPage() {
           <MenuItem value="">Tous</MenuItem>
           {STATUS_OPTIONS.map((s) => (
             <MenuItem key={s} value={s}>
-              {s}
+              {STATUS_LABELS[s] ?? s}
             </MenuItem>
           ))}
         </TextField>

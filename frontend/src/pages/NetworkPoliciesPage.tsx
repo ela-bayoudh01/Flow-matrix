@@ -21,7 +21,7 @@ import { useObservedSubnets, useNetworkPolicies } from "../hooks/useNetworkPolic
 import { NetworkPolicyForm } from "../components/network-policies/NetworkPolicyForm";
 import { TableSkeleton } from "../components/common/TableSkeleton";
 import { api } from "../api/client";
-import { STATUS_COLORS } from "../theme/colors";
+import { STATUS_COLORS, ACTION_LABELS } from "../theme/colors";
 import { PREFIX_OPTIONS, DEFAULT_PREFIX_LENGTH } from "../constants/subnetPrefixes";
 
 // Politiques de sous-réseau (2026-09-10, demande de l'encadrant) -- fonctionnalité NOUVELLE et
@@ -177,10 +177,10 @@ export function NetworkPoliciesPage() {
                         <TableCell>{p.src_cidr}</TableCell>
                         <TableCell>{p.destination}</TableCell>
                         <TableCell>
-                          {p.dst_port ?? "any"} / {p.protocol ?? "any"}
+                          {p.dst_port ?? "tout port"} / {p.protocol ?? "tout protocole"}
                         </TableCell>
                         <TableCell sx={{ color: p.action === "Block" ? STATUS_COLORS.critical : STATUS_COLORS.good, fontWeight: 600 }}>
-                          {p.action}
+                          {ACTION_LABELS[p.action] ?? p.action}
                         </TableCell>
                         <TableCell sx={{ maxWidth: 220 }}>{p.justification}</TableCell>
                         <TableCell>{p.decided_by ?? "—"}</TableCell>

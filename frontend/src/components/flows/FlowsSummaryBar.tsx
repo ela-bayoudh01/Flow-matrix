@@ -9,7 +9,7 @@ import DeviceHubOutlinedIcon from "@mui/icons-material/DeviceHubOutlined";
 import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 import type { SvgIconComponent } from "@mui/icons-material";
 import type { FlowsSummary } from "../../api/types";
-import { STATUS_COLORS, criticalityColor } from "../../theme/colors";
+import { STATUS_COLORS, criticalityColor, displayAxisLabel } from "../../theme/colors";
 
 // Carte de stat partagée : Dashboard, FlowsTablePage et le panneau de détail d'une cellule
 // de matrice utilisent toutes la même -- un changement ici se répercute partout, jamais
@@ -58,12 +58,12 @@ export function FlowsSummaryBar({ summary }: { summary: FlowsSummary }) {
   return (
     <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: "wrap" }}>
       <StatTile label="Total flux" value={summary.total_flows} icon={DeviceHubOutlinedIcon} />
-      <StatTile label="Allow" value={summary.allow_count} icon={CheckCircleOutlineIcon} color={STATUS_COLORS.good} />
-      <StatTile label="Block" value={summary.block_count} icon={BlockOutlinedIcon} color={STATUS_COLORS.critical} />
+      <StatTile label="Autorisé" value={summary.allow_count} icon={CheckCircleOutlineIcon} color={STATUS_COLORS.good} />
+      <StatTile label="Bloqué" value={summary.block_count} icon={BlockOutlinedIcon} color={STATUS_COLORS.critical} />
       {Object.entries(summary.criticality_breakdown).map(([label, count]) => (
         <StatTile
           key={label}
-          label={`Criticité : ${label}`}
+          label={`Criticité : ${displayAxisLabel(label)}`}
           value={count}
           icon={WarningAmberOutlinedIcon}
           color={criticalityColor(label === "non_qualifie" ? null : label)}

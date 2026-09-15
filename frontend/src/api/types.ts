@@ -33,6 +33,20 @@ export interface ImportLogsResponse {
   total_count: number;
 }
 
+// Détail d'une ligne en échec de parsing (2026-09-14, demande de l'encadrant) -- "voir
+// Historique des imports pour le détail" ne tenait pas sa promesse jusqu'ici (parsing_errors
+// n'était qu'un compteur) : affiché derrière un clic sur ce nombre, ImportErrorsDialog.tsx.
+export interface ImportLogErrorOut {
+  id: number;
+  line_number: number;
+  raw_line: string;
+  error_message: string;
+}
+
+export interface ImportLogErrorsResponse {
+  items: ImportLogErrorOut[];
+}
+
 export interface FlowOut {
   id: number;
   source: string | null;
@@ -159,6 +173,27 @@ export interface MatrixResponse {
   dimension_notice: string | null;
 }
 
+// Toutes les sources connues, indépendamment de l'activité du cycle courant (2026-09-12, bug
+// réel corrigé -- voir useSourceOptions.ts et backend/app/flows_query.py::list_known_sources).
+export interface SourcesResponse {
+  sources: string[];
+}
+
+// Période couverte + dernier import par source (2026-09-12, demande de l'encadrant après
+// démo) -- réutilisé par le Dashboard (toutes les sources), la Matrice et la Table des flux
+// (la source actuellement filtrée). Voir backend/app/flows_query.py::list_source_coverage.
+export interface SourceCoverageOut {
+  source: string;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  last_imported_at: string | null;
+  flow_count: number;
+}
+
+export interface SourceCoverageResponse {
+  items: SourceCoverageOut[];
+}
+
 // Bouton dédié "Changer la règle" (2026-09-05) -- seul chemin qui ouvre la fenêtre de
 // confirmation + justification + fiche PDF, toujours, quel que soit l'état du flux. Valider/
 // Bloquer restent un clic simple et immédiat, jamais conditionné à une détection de
@@ -180,27 +215,71 @@ export interface RuleChangeUpdate {
   validated_by?: string;
 }
 
-export interface ValidationHistoryOut {
+// Union discriminée sur `entry_type` (2026-09-13, fusion avec NetworkPolicy dans l'Historique
+// des validations -- "une politique de sous-réseau est aussi une vraie décision à tracer") :
+// chaque variante ne porte que ses propres champs réels, jamais une ligne "large" avec des
+// champs toujours undefined d'un côté -- narrowing naturel sur `entry.entry_type` côté
+// consommateurs (HistoryPage.tsx). Miroir exact de FlowHistoryEntryOut/
+// NetworkPolicyHistoryEntryOut (backend/app/schemas.py).
+export interface FlowHistoryEntryOut {
+  entry_type: "flow";
   id: number;
-  flow_id: number;
+  created_at: string;
   source: string | null;
+  decided_by: string | null;
+  justification: string | null;
+  flow_id: number;
   src_ip: string;
   dst_ip: string;
   dst_port: number | null;
   protocol: string;
   old_status: string | null;
   new_status: string;
-  validated_by: string | null;
-  created_at: string;
   // Renseignés uniquement pour une entrée issue d'une inversion d'action -- None sur une
   // entrée "classique" (Valider/Bloquer qui confirme l'observé).
-  justification: string | null;
   observed_action_before: string | null;
   decided_action: string | null;
 }
 
+export interface NetworkPolicyHistoryEntryOut {
+  entry_type: "network_policy";
+  id: number;
+  created_at: string;
+  source: string | null;
+  decided_by: string | null;
+  justification: string; // toujours renseignée (obligatoire à la création), contrairement au flux
+  src_cidr: string;
+  destination: string;
+  protocol: string | null;
+  dst_port: number | null;
+  action: "Allow" | "Block";
+}
+
+export type ValidationHistoryEntryOut = FlowHistoryEntryOut | NetworkPolicyHistoryEntryOut;
+
+export type EntryType = "flow" | "network_policy";
+
+// Filtres de la page Historique des validations (2026-09-12, demande de l'encadrant après
+// démo) -- tous optionnels, absents -> comportement inchangé. change_type distingue une
+// décision "Changer la règle" (justification non nulle) d'un Valider/Bloquer classique --
+// backend/app/validation_history_query.py::CHANGE_TYPES. entryType (2026-09-13) : filtre
+// indépendant du badge visuel "Flux"/"Sous-réseau" affiché sur chaque ligne -- utile pour
+// isoler un seul type sans changer l'affichage groupé par défaut.
+export type ChangeType = "rule_change" | "classic";
+
+export interface ValidationHistoryFilters {
+  flowId?: number;
+  q?: string;
+  source?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  changeType?: ChangeType;
+  entryType?: EntryType;
+  limit?: number;
+}
+
 export interface ValidationHistoryResponse {
-  items: ValidationHistoryOut[];
+  items: ValidationHistoryEntryOut[];
   total_count: number;
 }
 
@@ -437,6 +516,12 @@ export interface FlowDiffFilters extends FlowFilterValues {
   // ValidationCyclePage.tsx. Absent -> comportement inchangé (voir Services/
   // validation_cycle_engine.py::compute_diff).
   src_cidr?: string;
+  // Restreint à une cellule de la Matrice Réelle (2026-09-12, demande de l'encadrant) --
+  // utilisés par FlowDetailDrawer.tsx pour la colonne "Écart" du tiroir de détail en mode
+  // "Colorer par écart". Les trois vont ensemble, comme pour FlowsFilters.dimension ci-dessus.
+  dimension?: string;
+  row_value?: string;
+  col_value?: string;
 }
 
 export interface CellDiffOut {

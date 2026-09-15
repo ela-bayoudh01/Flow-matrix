@@ -11,7 +11,7 @@ import DownloadIcon from "@mui/icons-material/Download";
 import { useChangeFlowRule } from "../../hooks/useFlows";
 import { api } from "../../api/client";
 import type { FlowOut } from "../../api/types";
-import { describeAction } from "../../theme/colors";
+import { describeAction, ACTION_LABELS } from "../../theme/colors";
 
 // Fenêtre du bouton dédié "Changer la règle" (2026-09-05, décision de conception après un
 // test réel où la détection de contradiction sur Valider/Bloquer ne déclenchait la fenêtre
@@ -56,7 +56,7 @@ export function ActionOverrideDialog({ flow, targetAction, onClose }: ActionOver
           <>
             <Typography variant="body2" sx={{ mb: 2 }}>
               Le flux de <strong>{flow.src_ip}</strong> vers <strong>{flow.dst_ip}</strong>, port{" "}
-              <strong>{flow.dst_port ?? "any"}</strong>, application{" "}
+              <strong>{flow.dst_port ?? "tout port"}</strong>, application{" "}
               <strong>{flow.web_application ?? flow.application_protocol ?? "non renseignée"}</strong>, sera{" "}
               <strong>{targetAction === "Block" ? "Bloqué" : "Autorisé"}</strong>.
             </Typography>
@@ -85,7 +85,7 @@ export function ActionOverrideDialog({ flow, targetAction, onClose }: ActionOver
 
         {historyId && (
           <Alert severity="success">
-            Décision enregistrée : flux {flow?.src_ip} → {flow?.dst_ip} maintenant décidé "{targetAction}".
+            Décision enregistrée : flux {flow?.src_ip} → {flow?.dst_ip} maintenant décidé "{targetAction ? (ACTION_LABELS[targetAction] ?? targetAction) : ""}".
           </Alert>
         )}
       </DialogContent>

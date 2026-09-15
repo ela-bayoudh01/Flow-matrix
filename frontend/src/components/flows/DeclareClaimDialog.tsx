@@ -10,6 +10,7 @@ import DownloadIcon from "@mui/icons-material/Download";
 import { useDeclareRuleEnforcementClaim, useRuleEnforcementClaim } from "../../hooks/useRuleEnforcementClaim";
 import { api } from "../../api/client";
 import type { FlowOut, RuleEnforcementClaimOut } from "../../api/types";
+import { ACTION_LABELS } from "../../theme/colors";
 
 // "Déclarer la réclamation" (2026-09-10, demande de l'encadrant) -- SEUL déclencheur de cette
 // fenêtre : uniquement sur un flux "regle_non_appliquee" (cf. FlowDiffDetailDrawer.tsx).
@@ -50,7 +51,7 @@ export function DeclareClaimDialog({ flow, onClose }: DeclareClaimDialogProps) {
           <>
             <Typography variant="body2" sx={{ mb: 2 }}>
               Le flux de <strong>{flow.src_ip}</strong> vers <strong>{flow.dst_ip}</strong>, port{" "}
-              <strong>{flow.dst_port ?? "any"}</strong> a une décision (<strong>{flow.decided_action}</strong>)
+              <strong>{flow.dst_port ?? "tout port"}</strong> a une décision (<strong>{flow.decided_action ? (ACTION_LABELS[flow.decided_action] ?? flow.decided_action) : "—"}</strong>)
               toujours pas appliquée par le pare-feu.
             </Typography>
             {existingClaim && (

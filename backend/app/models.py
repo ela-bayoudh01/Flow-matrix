@@ -535,10 +535,17 @@ class ImportLog(Base):
     (contrairement à FlowValidationHistory, qui trace un Flow précis) : un import n'a pas
     d'entité parente unique à référencer, c'est son propre enregistrement autonome. Écrite
     automatiquement par app/import_log.py::record_import() à la fin de chaque import réussi
-    (appelée depuis main.py::import_logs(), PAS depuis app/ingestion.py -- ce module reste
-    intégralement inchangé, ce n'est qu'un enregistrement du résultat déjà calculé par
-    ingestion.import_log_file(), aucune nouvelle logique d'import). Consultable même après avoir
-    quitté puis rechargé la page Import (frontend/src/pages/ImportPage.tsx).
+    (appelée depuis main.py::import_logs()), à partir du résultat déjà calculé par
+    ingestion.import_log_file() -- aucune nouvelle logique D'IMPORT ajoutée à ce module.
+    Consultable même après avoir quitté puis rechargé la page Import
+    (frontend/src/pages/ImportPage.tsx).
+
+    2026-09-14 (demande de l'encadrant, "voir Historique des imports pour le détail" ne
+    tenait pas sa promesse -- parsing_errors n'était qu'un compteur) : ingestion.py capture
+    désormais aussi le détail de chaque ligne en échec (numéro, ligne brute, message), persisté
+    dans ImportLogError (voir plus bas) -- la seule addition à ce module depuis sa création,
+    toujours pas de nouvelle RÈGLE d'import (une ligne invalide continue d'être ignorée
+    exactement comme avant, juste plus jamais silencieusement).
     """
 
     __tablename__ = "import_logs"
@@ -558,3 +565,25 @@ class ImportLog(Base):
     log_entries_skipped_duplicate: Mapped[int]
     parsing_errors: Mapped[int]
     flows_touched: Mapped[int]
+
+
+class ImportLogError(Base):
+    """Détail d'une ligne en échec de parsing lors d'un import (2026-09-14, demande de
+    l'encadrant) -- une ligne par erreur, liée à l'ImportLog de l'import qui l'a produite.
+    Table d'audit en ajout seul, même principe que ImportLog ci-dessus. CASCADE (pas SET NULL) :
+    ce détail n'a de sens que rattaché à SON import précis, contrairement à LogEntry qui doit
+    survivre indépendamment de tout import (conservation intégrale des logs réellement ingérés).
+    `raw_line` gardée COMPLÈTE (pas tronquée comme le message de log serveur) -- c'est
+    précisément ce qui permet de juger si une erreur isolée est bénigne ou révèle un vrai
+    problème de format, sans avoir à aller lire les logs serveur à la main.
+    """
+
+    __tablename__ = "import_log_errors"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    import_log_id: Mapped[int] = mapped_column(ForeignKey("import_logs.id", ondelete="CASCADE"), index=True)
+
+    line_number: Mapped[int]
+    raw_line: Mapped[str]
+    error_message: Mapped[str]

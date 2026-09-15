@@ -80,3 +80,15 @@ def test_malformed_line_is_counted_and_does_not_abort_the_import(session):
 
     assert summary["parsing_errors"] == 1
     assert summary["log_entries_created"] == 1
+
+
+def test_malformed_line_detail_is_captured_for_later_diagnosis(session):
+    # 2026-09-14, demande de l'encadrant : "quelle ligne, pourquoi elle a échoué" doit rester
+    # consultable après coup, pas seulement compté/journalisé côté serveur.
+    summary = import_log_file(session, _file_of(ALLOW_HTTPS_LINE, "ligne invalide"), "test.log")
+
+    assert len(summary["parsing_error_details"]) == 1
+    detail = summary["parsing_error_details"][0]
+    assert detail["line_number"] == 2  # 2ᵉ ligne du fichier
+    assert detail["raw_line"] == "ligne invalide"
+    assert "non reconnu" in detail["error_message"]

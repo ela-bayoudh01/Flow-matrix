@@ -98,8 +98,8 @@ export function NetworkPolicyForm({ source, srcCidr, onSrcCidrChange }: NetworkP
         />
       </Stack>
       <TextField select label="Action" value={action} onChange={(e) => setAction(e.target.value as "Allow" | "Block")} size="small">
-        <MenuItem value="Allow">Autoriser (Allow)</MenuItem>
-        <MenuItem value="Block">Bloquer (Block)</MenuItem>
+        <MenuItem value="Allow">Autoriser</MenuItem>
+        <MenuItem value="Block">Bloquer</MenuItem>
       </TextField>
       <TextField
         label="Justification"

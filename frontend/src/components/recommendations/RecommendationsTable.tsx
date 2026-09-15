@@ -3,7 +3,7 @@ import { AllCommunityModule, ModuleRegistry, type ColDef } from "ag-grid-communi
 import { useMemo } from "react";
 import Chip from "@mui/material/Chip";
 import type { RuleRecommendationOut } from "../../api/types";
-import { FINDING_TYPE_LABELS, FINDING_TYPE_COLORS, validationStatusColor } from "../../theme/colors";
+import { FINDING_TYPE_LABELS, FINDING_TYPE_COLORS, STATUS_LABELS, validationStatusColor } from "../../theme/colors";
 import { appGridTheme } from "../../theme/agGridTheme";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -20,7 +20,7 @@ function FindingTypeChip({ findingType }: { findingType: string }) {
 
 function StatusChip({ status }: { status: string }) {
   return (
-    <Chip size="small" variant="outlined" label={status} sx={{ borderColor: validationStatusColor(status), color: validationStatusColor(status) }} />
+    <Chip size="small" variant="outlined" label={STATUS_LABELS[status] ?? status} sx={{ borderColor: validationStatusColor(status), color: validationStatusColor(status) }} />
   );
 }
 
