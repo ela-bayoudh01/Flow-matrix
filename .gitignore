@@ -20,6 +20,7 @@ backend/data/
 # réel -- usage personnel/local uniquement, jamais poussées sur GitHub (décision de Loulou,
 # confirmée 2026-08-11 : pas d'anonymisation, elles restent simplement locales).
 docs/
+CLAUDE.md
 
 # Node / React
 node_modules/
