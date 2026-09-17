@@ -112,7 +112,7 @@ export function NetworkPoliciesPage() {
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell>CIDR suggéré</TableCell>
+                      <TableCell>Sous réseaux</TableCell>
                       <TableCell>Machines distinctes</TableCell>
                       <TableCell>Flux associés</TableCell>
                       <TableCell />

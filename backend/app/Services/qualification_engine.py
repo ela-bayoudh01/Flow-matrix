@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Flow
 
-# --- Zone : rôle interne/externe de chaque zone réelle (cf. docs/07, classification prouvée) ---
+# --- Zone : rôle interne/externe de chaque zone réelle ---
 ZONE_ROLES: dict[str, str] = {
     "Internet_Zone": "externe",
     "ADSL_Zone": "externe",
@@ -35,7 +35,7 @@ ZONE_DIRECTION_POINTS: dict[tuple[str, str], int] = {
     ("externe", "interne"): 40,
     ("interne", "interne"): 10,
     ("interne", "externe"): 5,
-    ("externe", "externe"): 20,  # jamais observé sur les données réelles, prudence par défaut
+    ("externe", "externe"): 20,  
 }
 ZONE_UNCLASSIFIED_POINTS = 15
 
