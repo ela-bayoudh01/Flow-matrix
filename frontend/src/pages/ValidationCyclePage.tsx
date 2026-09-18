@@ -372,7 +372,7 @@ export function ValidationCyclePage() {
               <TableHead>
                 <TableRow>
                   <TableCell />
-                  <TableCell>CIDR suggéré</TableCell>
+                  <TableCell>Sous réseaux</TableCell>
                   <TableCell>Machines</TableCell>
                   <TableCell>Flux</TableCell>
                   <TableCell>Écarts de ce cycle</TableCell>
